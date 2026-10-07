@@ -113,8 +113,9 @@ python3 -m unittest discover -s tests
 # 이후 cloud/api.py 수정 시마다: CloudFormation 없이 코드만 바로 갱신
 python3 cloud/deploy.py
 
-# worker Lambda(컨테이너 이미지) 코드만 바꼈을 때 재배포하는 방법은 cloud/INFRA.md 참고
-# (ECR에 새 이미지 push 후 update-function-code --image-uri)
+# worker Lambda 코드(server.py·ai_runner.py·cloud/worker_handler.py)만 바뀌었을 때 — Docker 없이 배포
+python3 cloud/deploy_worker.py
+# Dockerfile.worker 자체(패키지·CLI)가 바뀌면 Docker로 전체 재빌드 후 ECR push(cloud/INFRA.md 참고)
 
 # 웹 화면만 갱신 (data/ 또는 키 파일은 절대 공개 업로드하지 말 것)
 aws s3api put-object --bucket <버킷명> --key index.html --body static/index.html \

@@ -1,4 +1,4 @@
-"""이미 저장된 Threads 하위 글의 제목·썸네일과 모음 주제를 새 규칙(cloud/api.py link_meta)으로 보정한다.
+"""이미 저장된 Threads 하위 글의 제목·썸네일을 새 규칙(cloud/api.py fetch_link_preview)으로 보정한다.
 기본은 미리보기(아무것도 쓰지 않음). --apply 를 붙이면 S3 데이터 파일에 조건부 쓰기(If-Match)로 반영한다.
 사용: python3 cloud/backfill_threads.py [--apply]"""
 import importlib.util
@@ -40,10 +40,9 @@ def fix(data):
         threads = [e for e in x.get('entries') or [] if e.get('kind') == 'link' and re.search(r'threads\.(com|net)', e.get('url', ''))]
         if not threads:
             continue
-        author, touched = '', False
+        touched = False
         for e in threads:
-            _, title, a = api.link_meta(e['url'])
-            author = author or a
+            _, title = api.fetch_link_preview(e['url'])
             if title and re.search(r' on Threads$', e.get('title', '')):
                 changes.append(f"[{x.get('title', '')[:20]}] 하위 글 제목: {title[:40]}")
                 e['title'] = title
@@ -51,10 +50,6 @@ def fix(data):
             if '&amp;' in e.get('thumbnail', ''):
                 e['thumbnail'] = e['thumbnail'].replace('&amp;', '&')
                 touched = True
-        if author and not x.get('topic'):
-            x['topic'] = api.thread_topic(author)
-            changes.append(f"[{x.get('title', '')[:20]}] 모음 주제: {x['topic']}")
-            touched = True
         if touched:
             x['revision'] = x.get('revision', 1) + 1
     return changes
