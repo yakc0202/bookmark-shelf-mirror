@@ -388,12 +388,12 @@ def change(data, path, body):
             candidate['entries'].append({'image_key':key})
             candidate['status']='queued';candidate['error']=''
             candidate['revision']=candidate.get('revision',1)+1
-            return {'id':candidate['id'],'message':'사진을 추가했어요. 맥에서 자동 분류합니다.'}
+            return {'id':candidate['id'],'message':'사진을 추가했어요. 자동으로 분류합니다.'}
         item=dict(id=secrets.token_hex(16),url='',title='사진 정리 대기',summary='',folder='받은 편지함',tags='[]',
              thumbnail='',status='queued',source='사진',note=note,created=now,error='',revision=1,deleted=False,
              kind='photo',image_key=key)
         data['items'].append(item)
-        return {'id':item['id'],'message':'사진을 저장했어요. 맥에서 자동 분류합니다.'}
+        return {'id':item['id'],'message':'사진을 저장했어요. 자동으로 분류합니다.'}
     if path=='/api/items':
         item=new_item(body)
         old=next((x for x in data['items'] if x['url']==item['url']
@@ -416,6 +416,8 @@ def change(data, path, body):
                 entries.append({'kind':'link','url':item['url'],'title':title or host,**({'thumbnail':thumb} if thumb else {})})
                 candidate['revision']=candidate.get('revision',1)+1
                 candidate['created']=now
+                # 정리 중에 글이 붙으면 워커의 이전 결과는 거절되므로 다시 대기열로 돌려 곧바로 재처리되게 한다
+                if candidate['status']=='processing':candidate['status']='queued'
                 return {'id':candidate['id'],'message':'이어지는 글로 추가했어요.'}
         data['items'].append(item)
         if item['status']=='ready':return {'id':item['id'],'message':'"나중에 다시 보기"에 저장했어요.'}
