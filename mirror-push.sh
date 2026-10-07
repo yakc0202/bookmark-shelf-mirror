@@ -2,11 +2,10 @@
 # 공개 미러(bookmark-shelf-mirror)로 이 저장소의 추적 파일을 내보낸다. 보안 관련 값은 하나도 내보내지 않는다.
 #   ./mirror-push.sh                 미리보기: 미러 사본을 만들어 바뀔 파일·검사 결과만 보여주고 되돌림(push 안 함)
 #   ./mirror-push.sh --push          사용자 확인을 받은 뒤 실제 커밋·push(일반 push, force-push 아님)
-#   ./mirror-push.sh --reset-history [2026-10-07 사용자 1회 승인 전용] 미러 기록을 깨끗한 커밋 하나로 바꾸고 force-push
 # 실제 값 목록은 data/mirror-redact.txt(커밋 안 됨). 남은 값이 하나라도 있으면 커밋·push 없이 멈춘다.
 set -eu
 MODE=${1:---check}
-case "$MODE" in --check|--push|--reset-history) ;; *) echo "알 수 없는 옵션: $MODE"; exit 1 ;; esac
+case "$MODE" in --check|--push) ;; *) echo "알 수 없는 옵션: $MODE"; exit 1 ;; esac
 SRC=$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)
 MIRROR=${MIRROR_DIR:-"$HOME/Documents/Codex/bookmark-shelf-mirror"}
 REDACT="$SRC/data/mirror-redact.txt"
@@ -16,10 +15,7 @@ git -C "$MIRROR" fetch -q origin
 git -C "$MIRROR" checkout -q -f main
 git -C "$MIRROR" reset -q --hard origin/main
 git -C "$MIRROR" clean -fdq
-restore() { git -C "$MIRROR" checkout -q -f main; git -C "$MIRROR" reset -q --hard origin/main; git -C "$MIRROR" clean -fdq; git -C "$MIRROR" branch -q -D fresh-history 2>/dev/null || true; }
-if [ "$MODE" = --reset-history ]; then
-  git -C "$MIRROR" checkout -q --orphan fresh-history
-fi
+restore() { git -C "$MIRROR" checkout -q -f main; git -C "$MIRROR" reset -q --hard origin/main; git -C "$MIRROR" clean -fdq; }
 
 python3 - "$SRC" "$MIRROR" "$REDACT" <<'PY' || { restore; exit 1; }
 import re, shutil, subprocess, sys
@@ -79,23 +75,11 @@ PY
 
 git -C "$MIRROR" add -A
 echo "== 미러에서 바뀔 파일"
-if [ "$MODE" = --reset-history ]; then
-  echo "(기록 초기화: 아래 파일 전체가 새 커밋 하나가 됨)"; git -C "$MIRROR" diff --cached --name-only | wc -l | sed 's/^ */파일 수: /'
-else
-  git -C "$MIRROR" diff --cached --name-status
-fi
+git -C "$MIRROR" diff --cached --name-status
 if [ "$MODE" = --check ]; then
   restore; echo "미리보기만 함 — push 안 함. 사용자 확인 후 --push"; exit 0
 fi
-if git -C "$MIRROR" diff --cached --quiet && [ "$MODE" = --push ]; then echo "mirror: 변경 없음"; exit 0; fi
-if [ "$MODE" = --reset-history ]; then
-  git -C "$MIRROR" commit -q -m "공개 미러 초기화(보안 관련 값 제외)"
-  git -C "$MIRROR" push -q --force origin fresh-history:main
-  git -C "$MIRROR" fetch -q origin
-  git -C "$MIRROR" checkout -q -B main origin/main
-  git -C "$MIRROR" branch -q -D fresh-history
-else
-  git -C "$MIRROR" commit -q -m "$(git -C "$SRC" log -1 --format=%s)"
-  git -C "$MIRROR" push -q origin main
-fi
+if git -C "$MIRROR" diff --cached --quiet; then echo "mirror: 변경 없음"; exit 0; fi
+git -C "$MIRROR" commit -q -m "$(git -C "$SRC" log -1 --format=%s)"
+git -C "$MIRROR" push -q origin main
 echo "mirror push 완료: $(git -C "$MIRROR" log -1 --oneline)"

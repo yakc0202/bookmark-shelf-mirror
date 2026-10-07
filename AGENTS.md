@@ -42,6 +42,6 @@
    - `REQUESTS.md`를 포함한 문서는 민감 값을 가린 채로 올린다(사용자 지시, 2026-10-07). 공개 미러에서 아예 빼는 파일은 API 주소가 박혀 가릴 수 없는 단축어 `shortcuts/Save-to-Shelf-Cloud.shortcut`, `shortcuts/save-to-shelf-cloud-unsigned.shortcut`뿐(스크립트의 EXCLUDE).
    - **매번 사용자 확인 후 push (사용자 지시, 2026-10-07)**: 먼저 `./mirror-push.sh`(미리보기 — 바뀔 파일·검사 결과만 보여주고 되돌림)를 실행해 결과를 사용자에게 보여주고, 승인받은 뒤에 `./mirror-push.sh --push`.
    - 스크립트는 바이너리를 포함한 모든 파일을 검사해, 목록의 실제 값이나 계정 ID·액세스 키·개인 키·Lambda URL·CloudFront ID/주소·64자리 해시 모양이 남아 있으면 push 없이 멈춘다. 새 민감 값을 저장소에 적었다면 `data/mirror-redact.txt`에 `실제값 => <표시>`를 추가한다(긴 값을 먼저).
-   - force-push 금지. 예외: 2026-10-07 사용자가 1회 승인한 `--reset-history`(미러 기록을 깨끗한 커밋 하나로 교체)뿐이며, 사용 후 이 옵션은 스크립트에서 제거한다.
+   - force-push 금지. (2026-10-07 사용자 1회 승인으로 미러 기록을 깨끗한 커밋 하나로 초기화했고, 그 옵션은 스크립트에서 제거함.)
    - Claude Code 자동 모드에서는 허용 규칙 `Bash(./mirror-push.sh)`, `Bash(./mirror-push.sh *)`가 있어야 실행된다(없으면 안전 검사에 막힘 — 막혔다고 기록·보고).
 4. 위 단계 중 하나라도 못 했으면 "완료"라고 하지 말고 무엇이 남았는지 기록·보고한다.
