@@ -44,11 +44,24 @@ generic = [
     r'\bE[0-9A-Z]{12,13}\b',                                # CloudFront 배포·OAC ID
     r'\b[0-9a-f]{64}\b',                                    # 키 해시 등
 ]
+def public_requests(text):
+    # REQUESTS.md는 기능 개선 기록만 공개: '<!-- mirror:skip -->'가 붙은 줄을 빼고,
+    # 제목 줄(#)에 붙어 있으면 다음 제목 전까지 그 항목 전체를 뺀다.
+    out, skip = [], False
+    for line in text.splitlines(keepends=True):
+        if line.startswith('#'):
+            skip = 'mirror:skip' in line
+        if skip or 'mirror:skip' in line:
+            continue
+        out.append(line)
+    return ''.join(out)
 leaks = []
 for name in files:
     dst = mirror / name
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src / name, dst)
+    if name == 'REQUESTS.md':
+        dst.write_text(public_requests(dst.read_text()))
     data = dst.read_bytes()
     try:
         text = data.decode('utf-8')

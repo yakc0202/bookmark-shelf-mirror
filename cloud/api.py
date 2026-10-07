@@ -555,7 +555,12 @@ def handler(event, context):
             body={'id':body.get('id'),'_photo_key':key} if path=='/api/attach-photo' else {'_photo_key':key,'_note':str(body.get('note',''))[:20000]}
         if path=='/api/collections/entries':
             body['_thumbnail'],body['_preview_title']=fetch_link_preview(str(body.get('url','')).strip())
-        result=transact(lambda data:change(data,path,body))
+        try:
+            result=transact(lambda data:change(data,path,body))
+        except Problem as e:
+            # 이미 바뀐 카드의 이전 결과는 적용하지 않되 정상 응답으로 돌려준다(워커가 오류로 멈추지 않고 다음 작업으로 넘어가게)
+            if path=='/worker/complete' and e.status==409:return response(200,{'applied':False,'message':e.message})
+            raise
         if path in ('/api/items','/api/photos','/api/memos/extract','/api/memos/save','/api/memos/summarize'):
             try:
                 LAMBDA_CLIENT.invoke(FunctionName=os.environ.get('WORKER_FUNCTION','<WORKER_LAMBDA_NAME>'),InvocationType='Event',Payload=b'{}')
