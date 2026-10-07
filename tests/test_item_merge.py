@@ -16,6 +16,19 @@ class ItemMerge(unittest.TestCase):
   item=self.data['items'][0]
   self.assertEqual(out['id'],item['id'])
   self.assertEqual(item['entries'],[{'kind':'link','url':'https://a.test/thread/two','title':'a.test'}])
+ def test_merge_into_card_being_processed_requeues_it(self):
+  self.post('https://a.test/thread/one')
+  first=api.change(self.data,'/worker/claim',{})['item']
+  self.assertEqual(self.data['items'][0]['status'],'processing')
+  self.post('https://a.test/thread/two')
+  item=self.data['items'][0]
+  self.assertEqual(item['status'],'queued')
+  done={'id':first['id'],'lease':first['lease'],'revision':first['revision'],'result':{'status':'ready','title':'t'}}
+  with self.assertRaises(api.Problem):api.change(self.data,'/worker/complete',done)
+  again=api.change(self.data,'/worker/claim',{})['item']
+  self.assertEqual(again['id'],first['id']);self.assertEqual(len(again['entries']),1)
+  api.change(self.data,'/worker/complete',{**done,'lease':again['lease'],'revision':again['revision']})
+  self.assertEqual(self.data['items'][0]['status'],'ready')
  def test_link_outside_window_starts_new_item(self):
   self.post('https://a.test/thread/one')
   self.data['items'][0]['created']-=30
