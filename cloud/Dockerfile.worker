@@ -1,0 +1,10 @@
+FROM public.ecr.aws/lambda/python:3.13
+RUN dnf install -y tar xz && \
+    curl -fsSL https://nodejs.org/dist/v22.11.0/node-v22.11.0-linux-arm64.tar.xz -o /tmp/node.tar.xz && \
+    tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && \
+    rm /tmp/node.tar.xz && \
+    npm install -g @openai/codex @anthropic-ai/claude-code && \
+    dnf clean all
+COPY server.py ai_runner.py ${LAMBDA_TASK_ROOT}/
+COPY cloud/worker_handler.py ${LAMBDA_TASK_ROOT}/
+CMD ["worker_handler.handler"]
