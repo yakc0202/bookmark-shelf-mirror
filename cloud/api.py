@@ -143,25 +143,47 @@ def fetch_tweet_oembed_title(url):
     text=re.sub(r'\s*(?:pic\.twitter\.com|https?://t\.co)/\S+\s*$','',text)
     return re.sub(r'\s+',' ',text).strip()[:160]
 
-def fetch_link_preview(url):
+def link_meta(url):
+    """미리보기용 (썸네일, 제목, 작성자). 작성자는 Threads 글에서만 채운다."""
     try:
         req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; LinkShelfBot/1.0)'})
         with urllib.request.urlopen(req,timeout=5) as r:
             text=r.read(200_000).decode('utf-8','ignore')
     except Exception:
-        return '',''
-    img=(re.search(r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',text,re.I)
-         or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:image["\']',text,re.I))
-    title=(re.search(r'<meta[^>]+(?:property|name)=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',text,re.I)
-           or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:title["\']',text,re.I)
-           or re.search(r'<title[^>]*>([^<]+)</title>',text,re.I))
-    thumb=urllib.parse.urljoin(url,img.group(1)) if img else ''
-    ttl=html.unescape(title.group(1)).strip()[:160] if title else ''
-    host=urllib.parse.urlsplit(url).hostname or ''
+        return '','',''
+    def meta(name):
+        m=(re.search(r'<meta[^>]+(?:property|name)=["\']'+re.escape(name)+r'["\'][^>]+content=["\']([^"\']*)["\']',text,re.I)
+           or re.search(r'<meta[^>]+content=["\']([^"\']*)["\'][^>]+(?:property|name)=["\']'+re.escape(name)+r'["\']',text,re.I))
+        return html.unescape(m.group(1)).strip() if m else ''
+    img=meta('og:image')
+    ttl=meta('og:title')
+    if not ttl:
+        m=re.search(r'<title[^>]*>([^<]+)</title>',text,re.I)
+        ttl=html.unescape(m.group(1)).strip() if m else ''
+    thumb=urllib.parse.urljoin(url,img) if img else ''
+    ttl=ttl[:160]
+    author=''
+    host=(urllib.parse.urlsplit(url).hostname or '').lower()
+    if host.endswith('threads.com') or host.endswith('threads.net'):
+        # Threads는 og:title이 "이름 (@아이디) on Threads"뿐이라 글 본문(og:description)의 첫 줄을 제목으로 쓴다
+        m=re.match(r'^(.*\S)\s+on Threads$',ttl)
+        if m:
+            author=m.group(1)[:100]
+            first=next((line.strip() for line in (meta('og:description') or meta('description')).splitlines() if line.strip()),'')
+            if first:ttl=first[:160]
     if host.endswith('twitter.com') or host.endswith('x.com'):
         tweet_title=fetch_tweet_oembed_title(url)
         if tweet_title:
             ttl=tweet_title
+    return thumb,ttl,author
+
+def thread_topic(author):
+    # "이름 | 소개 (@아이디)" → "이름": 모음 표시에 쓰기 좋게 짧게
+    name=re.sub(r'\s*\(@[^)]*\)\s*$','',author).split(' | ')[0].strip()
+    return name[:30]
+
+def fetch_link_preview(url):
+    thumb,ttl,_=link_meta(url)
     return thumb,ttl
 
 def clean_entry_url(raw):
@@ -412,8 +434,9 @@ def change(data, path, body):
             entries=candidate.setdefault('entries',[])
             if len(entries)<50:
                 host=urllib.parse.urlsplit(item['url']).hostname or item['url']
-                thumb,title=fetch_link_preview(item['url'])
+                thumb,title,author=link_meta(item['url'])
                 entries.append({'kind':'link','url':item['url'],'title':title or host,**({'thumbnail':thumb} if thumb else {})})
+                if author and not candidate.get('topic'):candidate['topic']=thread_topic(author)
                 candidate['revision']=candidate.get('revision',1)+1
                 candidate['created']=now
                 # 정리 중에 글이 붙으면 워커의 이전 결과는 거절되므로 다시 대기열로 돌려 곧바로 재처리되게 한다
