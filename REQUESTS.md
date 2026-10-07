@@ -517,7 +517,7 @@
 - 함께 보완: 메모→서랍 파비콘 대응으로 넣은 `refreshFavicon()`은 화면 전환(route)과 pageshow 때만 실행되고 탭 아이콘 `<link rel="icon">` 하나만 다시 넣음(1분 자동 새로고침에서는 실행 안 됨, 네트워크 요청 없음). 근본 원인은 아이폰 사파리가 `https://<SITE_DOMAIN>/` 주소에 묶어 둔 10월 2일 아이콘 기억이라, `?v=2`처럼 다른 주소에서는 문제가 없음.
 
 ### 2026-10-07 mirror에는 AWS ID 등 보안 관련 값을 하나도 넣지 말 것
-- 상태: 진행중(사용자가 허용 규칙 `Bash(./mirror-push.sh)` 추가 → 첫 실행 필요)
+- 상태: 완료
 - 처리: 공개 미러 전체 기록(25커밋) 검사 — AWS 계정 ID·액세스 키·개인 키는 없음. 다만 이전 세션이 올린 `cloud/INFRA.md`에 CloudFront 배포 ID, OAC ID, CloudFront 기본 주소, API Lambda URL ID 4가지가 이미 들어가 있음(기록에 남아 있어 새 커밋으로는 과거 기록에서 지워지지 않음 — 지우려면 미러 저장소 재생성이나 기록 재작성 필요, 사용자 결정 대기). `mirror-push.sh` 추가: 추적 파일을 미러 폴더에 복사 → `data/mirror-redact.txt`(커밋 안 됨, 실제 값 목록)대로 표시로 치환 → 계정 ID·키·Lambda URL·CloudFront ID/주소·64자리 해시 모양 검사, 하나라도 남으면 push 중단. 로컬 사본으로 시험: 실제 값 0개 남음, 일부러 넣은 가짜 액세스 키는 잡아서 중단함. AGENTS.md 미러 단계를 이 스크립트 전용으로 바꾸고 보안 값 금지 규칙 추가.
 - 사용자가 `/permissions`로 넣은 규칙이 네 줄이 한 문자열로 합쳐져 `~/.claude/settings.json`에 하나로 들어가 동작하지 않음 → 지우고 `Bash(./mirror-push.sh)` 한 줄만 추가하도록 안내.
 - 2026-10-07 사용자 확인 결과: (1) 도메인·리전·리소스 이름·IAM 사용자/프로필·GitHub 아이디는 프라이빗에만 두고 공개 미러에서는 가림, REQUESTS.md는 공개 미러에서 제외 (2) 이미 올라간 값은 이번 1회 force-push로 미러 기록에서 삭제 (3) 앞으로 mirror push는 매번 확인.
@@ -525,4 +525,5 @@
 - `mirror-push.sh` 재작성: 기본 실행은 미리보기(push 안 함), `--push`로 실제 push, `--reset-history`(1회 승인)로 기록 초기화. 제외 파일 3개, 가릴 값 22종(`data/mirror-redact.txt`), 바이너리까지 바이트 검사, 원본에서 지운 파일은 미러에서도 지움. 로컬 사본 시험: 50개 파일 통과, 실제 값 0개.
 - 남은 일: 사용자 허용 규칙 정리(합쳐 들어간 규칙 삭제 → `Bash(./mirror-push.sh)`, `Bash(./mirror-push.sh *)` 추가) → 미리보기 결과 확인받기 → `--reset-history` 실행 → 이 옵션 제거 커밋.
 - 2026-10-07 정정: 사용자 의도는 REQUESTS.md를 빼는 게 아니라 민감 값을 가린 채로 올리는 것 → EXCLUDE에서 REQUESTS.md 제거(단축어 2개만 제외 유지). REQUESTS.md 검사: 토큰·키·해시 실제 값, 이메일, IP, 전화번호, 사용자 경로 없음. 남은 실제 값(CloudFront 주소, 도메인 등)은 가림 목록으로 처리. DNS 업체 이름 "<DNS_REGISTRAR>"도 가림 목록에 추가.
+- 2026-10-07 완료: 사용자가 허용 규칙 `Bash(./mirror-push.sh)`, `Bash(./mirror-push.sh *)` 추가(옵션까지 허용 → 확인 절차는 AGENTS.md 규칙으로 지킴). 승인 후 `--reset-history` 실행 → 공개 미러 기록이 커밋 1개(`97d4d8c`, 파일 51개, 가린 REQUESTS.md 포함)로 교체됨. 새로 받아 전체 기록을 바이트 단위로 재검사: 실제 값 0개. GitHub이 옛 커밋을 정확한 해시 주소로는 한동안 보여줄 수 있음(포크·스타 0). 이후 `--reset-history` 옵션은 스크립트에서 제거(앞으로 force-push 불가).
 
