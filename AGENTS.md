@@ -37,7 +37,7 @@
 
 코드를 변경하면 사용자에게 다시 묻지 않고 항상 아래까지 마친다. 로컬에만 두고 끝내지 않는다.
 
-1. 실 사이트 배포 — 웹 화면(`static/index.html`)은 S3 업로드, `cloud/api.py`는 `python3 cloud/deploy.py` (명령은 `SETUP.md` "배포" 참고)
+1. 실 사이트 배포 — 웹 화면(`static/index.html`)은 S3 업로드, `cloud/api.py`는 `python3 cloud/deploy.py`, 정리 작업(`server.py`·`ai_runner.py`·`cloud/worker_handler.py`)은 `python3 cloud/deploy_worker.py`(Docker 불필요) (명령은 `SETUP.md` "배포" 참고). 정리 작업 코드를 바꾸면 반드시 이것까지 배포해야 실제로 반영된다.
 2. `git push origin main`
 3. mirror push — 반드시 `./mirror-push.sh`로만 한다(직접 복사·push 금지). 대상: GitHub `bookmark-shelf-mirror`(**공개** 저장소), 작업 폴더 `~/Documents/Codex/bookmark-shelf-mirror`.
    - **공개 미러에는 보안 관련 값을 단 하나도 넣지 않는다(사용자 지시, 2026-10-07).** AWS 계정 ID·리소스 ID·엔드포인트·키·해시뿐 아니라 도메인·리전·AWS 리소스 이름·IAM 사용자/프로필·GitHub 아이디·DNS 업체 이름도 공개 미러에서는 가린다(프라이빗에는 그대로 둔다). 실제 값 목록은 `data/mirror-redact.txt`(커밋 안 됨).

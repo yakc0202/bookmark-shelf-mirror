@@ -158,3 +158,10 @@ CloudFormation을 거치지 않습니다.
 - 탭 파비콘: `photos/site-favicon-v1.png`(투명 배경 128px). `photos/`는 1년 불변 캐시라 아이콘을 바꿀 땐 같은 이름에 덮어쓰지 말고 `v2`처럼 새 이름으로 올린 뒤 `index.html`과 `cloud/site-gate.js`의 링크를 함께 바꿀 것.
 - 홈 화면·즐겨찾기 아이콘: `apple-touch-icon.png`(180px, 미색 배경 — iOS가 투명 배경을 검게 칠하므로 배경 유지).
 
+## worker 코드 배포 (Docker 없이, 2026-10-07)
+
+- `server.py`·`ai_runner.py`·`cloud/worker_handler.py`만 바뀐 경우: `python3 cloud/deploy_worker.py`. 지금 worker Lambda가 쓰는 이미지 위에 이 세 파일만 담은 층을 얹은 새 이미지를 `aws ecr` API(batch-get-image, 레이어 업로드, put-image)로 올리고 Lambda를 그 이미지로 바꾼다. 태그 `patch-YYYYMMDD-HHMMSS`와 `latest`를 함께 붙임.
+- 스크립트가 처음에 출력하는 "현재(되돌릴 때 쓸) 이미지" 주소로 `aws lambda update-function-code --image-uri <주소>`를 하면 되돌릴 수 있음.
+- Python 패키지·Node·Codex/Claude CLI 버전을 바꾸는 등 `cloud/Dockerfile.worker` 자체가 바뀌면 Docker로 전체 재빌드가 필요(이 맥에는 2026-10-07 기준 Docker 없음).
+- 배포 뒤 확인: `aws lambda invoke --function-name <worker> --invocation-type RequestResponse`로 한 번 실행해 오류 없이 `{"processed": N}`이 나오는지 본다.
+- 첫 사용(2026-10-07): 모음 주제 추론 반영. 이전 이미지 `sha256:6289f55a…`, 새 이미지 `sha256:9e19700b…`(태그 `patch-20261007-145550`).
