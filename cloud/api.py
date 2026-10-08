@@ -105,7 +105,7 @@ def clean_schedule_item(kind,body,old,now,sched):
                 'note':text('note',1000),'done':done,'done_at':(old.get('done_at') if old and old.get('done') and done else (now if done else 0))}
     if kind in ('events','bookings','routines'):
         start,end=clock('start'),clock('end')
-        if end<=start:raise Problem(400,'끝나는 시간이 시작보다 늦어야 해요.')
+        if end<start:raise Problem(400,'끝나는 시간이 시작보다 빠를 수 없어요.')  # 같은 시각(시작=끝)은 허용
         if kind=='routines':
             days=body.get('days')
             if not isinstance(days,list) or not days or any(not isinstance(d,int) or isinstance(d,bool) or not 0<=d<=6 for d in days):
