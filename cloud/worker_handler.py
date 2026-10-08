@@ -46,7 +46,7 @@ def call(path, body):
 
 def handler(event, context):
     bootstrap_credentials()
-    from server import organize, extract_excerpt, summarize_memo, SummaryUnavailable
+    from server import organize, extract_excerpt, summarize_memo, extract_bookings, SummaryUnavailable
     processed = 0
     while processed < 20 and context.get_remaining_time_in_millis() > 30000:
         try:
@@ -68,6 +68,12 @@ def handler(event, context):
                 out = summarize_memo(item.get('content', ''))
                 summary = out['summary'][:300] if out.get('sufficient') and out.get('summary', '').strip() else ''
                 result = {'status': 'ready', 'summary': summary}
+            elif kind == 'schedule-import':
+                with tempfile.TemporaryDirectory(prefix='capture-', dir='/tmp') as temp:
+                    photo = Path(temp) / 'capture.jpg'
+                    with urllib.request.urlopen(item['image_download'], timeout=30) as res:
+                        photo.write_bytes(res.read(10_000_001))
+                    result = {'status': 'ready', 'bookings': extract_bookings(photo)}
             elif item.get('image_download'):
                 with tempfile.TemporaryDirectory(prefix='organize-', dir='/tmp') as temp:
                     urls = item.get('entries_download') or [item['image_download']]
@@ -89,6 +95,8 @@ def handler(event, context):
                 result = {'status': 'ai_waiting', 'error': 'AI 추출 대기 중입니다. 1시간 뒤 다시 시도합니다.'}
             elif kind == 'memo-summary':
                 result = {'status': 'ai_waiting', 'summary': ''}
+            elif kind == 'schedule-import':
+                result = {'status': 'ai_waiting', 'error': 'AI가 바빠서 1시간 뒤 다시 읽습니다.'}
             else:
                 result = {'status': 'ai_waiting', 'error': 'AI 요약 대기 중입니다. 링크는 저장되어 있으며 1시간 뒤 다시 시도합니다.'}
         except Exception:
@@ -96,10 +104,12 @@ def handler(event, context):
                 result = {'status': 'needs_content', 'error': '추출 중 오류가 발생했습니다.'}
             elif kind == 'memo-summary':
                 result = {'status': 'ready', 'summary': ''}
+            elif kind == 'schedule-import':
+                result = {'status': 'needs_content', 'error': '캡처에서 예약을 읽지 못했어요.'}
             else:
                 result = {'status': 'needs_content', 'error': '본문을 충분히 읽지 못했습니다. 본문을 추가하면 다시 정리합니다.'}
         complete = {'id': item['id'], 'lease': item['lease'], 'revision': item.get('revision', 1), 'result': result}
-        if kind in ('memo-extract', 'memo-summary'):
+        if kind in ('memo-extract', 'memo-summary', 'schedule-import'):
             complete['kind'] = kind
         try:
             call('/worker/complete', complete)

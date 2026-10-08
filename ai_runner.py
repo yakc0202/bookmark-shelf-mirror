@@ -23,7 +23,7 @@ def validate(out):
         raise SummaryUnavailable('AI 응답 형식이 올바르지 않습니다.')
     return out
 
-def run_claude(prompt,schema,workdir,image_path=None):
+def run_claude(prompt,schema,workdir,image_path=None,check=validate):
     binary=shutil.which('claude')
     if not binary:raise SummaryUnavailable('Claude Code가 설치되지 않았습니다.')
     content=[{'type':'text','text':prompt}]
@@ -42,7 +42,7 @@ def run_claude(prompt,schema,workdir,image_path=None):
     final=next((e for e in reversed(events) if e.get('type')=='result'),{})
     if result.returncode or final.get('is_error'):
         raise SummaryUnavailable('Claude Code 로그인 또는 사용 한도를 확인해 주세요.')
-    return validate(final.get('structured_output'))
+    return check(final.get('structured_output'))
 
 def search_location(name):
     binary=shutil.which('claude')
@@ -64,7 +64,7 @@ def search_location(name):
     first_line=text.splitlines()[0].strip() if text else ''
     return first_line if 0<len(first_line)<=20 else ''
 
-def run_summary(prompt,schema,data,image_path=None):
+def run_summary(prompt,schema,data,image_path=None,check=validate):
     cooldown=Path(data)/'codex-cooldown.json'
     try:until=float(json.loads(cooldown.read_text()).get('until',0))
     except (OSError,ValueError,TypeError):until=0
@@ -79,9 +79,9 @@ def run_summary(prompt,schema,data,image_path=None):
                 '--sandbox','read-only','-C',str(p),'--output-schema',str(p/'schema.json'),'-o',str(p/'result.json')]
                 +image_args+['-'],input=prompt,text=True,capture_output=True,timeout=180)
             if result.returncode==0 and (p/'result.json').exists():
-                try:return validate(json.loads((p/'result.json').read_text()))
+                try:return check(json.loads((p/'result.json').read_text()))
                 except ValueError:raise SummaryUnavailable('Codex 응답 형식 오류입니다.')
             if not quota_exhausted(result.stdout+'\n'+result.stderr):
                 raise SummaryUnavailable('Codex 연결 실패입니다. 나중에 다시 시도합니다.')
             cooldown.write_text(json.dumps({'until':time.time()+3600}));cooldown.chmod(0o600)
-        return run_claude(prompt,schema,p,image_path)
+        return run_claude(prompt,schema,p,image_path,check)
