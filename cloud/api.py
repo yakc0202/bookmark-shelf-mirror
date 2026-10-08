@@ -114,6 +114,7 @@ def clean_schedule_item(kind,body,old,now,sched):
             if kind_of not in ('routine','meal'):raise Problem(400,'루틴 종류를 확인해 주세요.')
             return {**base,'title':text('title',100,True),'start':start,'end':end,'days':sorted(set(days)),'type':kind_of}
         item={**base,'title':text('title',100,True),'date':date('date'),'start':start,'end':end,'note':text('note',500)}
+        if kind=='events':item['job']=body.get('job') is True  # 입사지원 일정(다른 색, 달력에서 숨기기 가능)
         if kind=='bookings':
             pass_id=str(body.get('pass_id','')).strip()
             if pass_id and not any(x['id']==pass_id for x in sched['passes']):raise Problem(400,'이용권을 찾을 수 없어요.')

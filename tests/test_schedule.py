@@ -18,7 +18,10 @@ class Schedule(unittest.TestCase):
    with self.assertRaises(api.Problem): save(self.data, 'todos', **bad)
  def test_event_and_routine_times(self):
   e = save(self.data, 'events', title='치과', date='2026-10-09', start='14:00', end='15:00')
-  self.assertEqual(e['start'], '14:00')
+  self.assertEqual((e['start'], e['job']), ('14:00', False))
+  j = save(self.data, 'events', id=e['id'], title='A사 면접', date='2026-10-09', start='14:00', end='15:00', job=True)
+  self.assertTrue(j['job'])
+  self.assertFalse(save(self.data, 'events', title='x', date='2026-10-09', start='14:00', end='15:00', job='yes')['job'])
   with self.assertRaises(api.Problem): save(self.data, 'events', title='x', date='2026-10-09', start='15:00', end='14:00')
   r = save(self.data, 'routines', title='점심', start='12:00', end='13:00', days=[5, 1, 1], type='meal')
   self.assertEqual((r['days'], r['type']), ([1, 5], 'meal'))
