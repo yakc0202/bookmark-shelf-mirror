@@ -125,8 +125,6 @@ html.nb .picker-btn{box-shadow:none!important;border:2px solid #3a3b46!important
 .picker-days span{font-size:11px;color:#7a7c86;padding:4px 0}
 .picker-panel button.on{background:#3a3b46!important;color:#fff!important}
 .picker-panel button.today{border:1px solid #3a3b46}
-.picker-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:3px}
-.picker-title{margin:4px 0;font-size:12px;color:#7a7c86}
 .picker-foot{display:flex;gap:6px;justify-content:flex-end;margin-top:6px}
 .picker-foot button{padding:6px 12px;border:2px solid #3a3b46!important}
 html .sched-item.t-gym.waiting{border-left-style:dashed;background:#fff}
@@ -289,7 +287,7 @@ function drawSchedule(){
 function schedHead(box,title){const h=mk('div','sched-head');h.append(mk('h2','marker',title));box.append(h);return h}
 
 async function editTodo(t,date,copy){const v=await ask({title:copy?'할 일 복사해서 만들기':t?'할 일 수정':'할 일 추가',fields:[{label:'할 일',value:t?t.title:'',required:true},{label:'날짜(선택 — 비우면 오늘 할 일에 계속 보여요)',type:'date',value:t?t.due:(date&&date!==todayIso()?date:'')}],okLabel:'저장'});if(!v)return;await schedSave('todos',{...(t&&!copy?{id:t.id,done:t.done,note:t.note}:{}),...(copy?{note:t.note}:{}),title:v[0],minutes:t?t.minutes:30,due:v[1]})}
-async function editEvent(e,date,copy){const v=await ask({title:copy?'일정 복사해서 만들기':e?'일정 수정':'일정 추가',fields:[{label:'일정',value:e?e.title:'',required:true},{label:copy?'날짜 (복사하면 1주 뒤로 채워져요)':'날짜',type:'date',value:e?(copy?shiftIso(e.date,7):e.date):(date||todayIso()),required:true},{label:'시작',type:'time',value:e?e.start:'10:00',required:true},{label:'끝 (시작을 정하면 1시간 뒤로 맞춰져요)',type:'time',value:e?e.end:'11:00',required:true},{label:'입사지원 일정',type:'checkbox',value:!!(e&&e.job)}],okLabel:'저장',onChange:(ins,changed)=>{if(changed===ins[2]&&ins[2].value)ins[3].value=hourLater(ins[2].value)}});if(!v)return;await schedSave('events',{...(e&&!copy?{id:e.id}:{}),title:v[0],date:v[1],start:v[2],end:v[3],job:v[4]===true})}
+async function editEvent(e,date,copy){const v=await ask({title:copy?'일정 복사해서 만들기':e?'일정 수정':'일정 추가',fields:[{label:'일정',value:e?e.title:'',required:true},{label:copy?'날짜 (복사하면 1주 뒤로 채워져요)':'날짜',type:'date',value:e?(copy?shiftIso(e.date,7):e.date):(date||todayIso()),required:true},{label:'시작',type:'time',value:e?e.start:'10:00',required:true},{label:'끝',type:'time',value:e?e.end:'11:00',required:true},{label:'입사지원 일정',type:'checkbox',value:!!(e&&e.job)}],okLabel:'저장',onChange:(ins,changed)=>{if(changed===ins[2]&&/^\d{2}:\d{2}$/.test(ins[2].value))ins[3].value=hourLater(ins[2].value)}});if(!v)return;await schedSave('events',{...(e&&!copy?{id:e.id}:{}),title:v[0],date:v[1],start:v[2],end:v[3],job:v[4]===true})}
 async function toggleTodo(t){await schedSave('todos',{id:t.id,title:t.title,minutes:t.minutes,due:t.due,note:t.note,done:!t.done})}
 
 /* 오늘: 그날의 일정(운동 예약 포함, 예약 대기는 빼고)과 할 일을 목록으로. 일정은 끝난 시간이 지나면 체크·아래로, 할 일은 직접 체크하면 아래로. */
@@ -418,7 +416,7 @@ async function editPass(p){const v=await ask({title:p?'이용권 수정':'이용
 function hourLater(start){return clockOf(Math.min(hm(start)+60,1439))}
 async function editBooking(b,copy){
   const opts=[{value:'',label:'이용권 없음'},...schedule.passes.map(p=>({value:p.id,label:p.title+' (남은 '+passLeft(p)+'회)'}))];
-  const v=await ask({title:copy?'예약 복사해서 만들기':b?'예약 수정':'예약 추가',fields:[{label:'수업·운동 (예: 발레)',value:b?b.title:'',required:true},{label:copy?'날짜 (복사하면 1주 뒤로 채워져요)':'날짜',type:'date',value:b?(copy?shiftIso(b.date,7):b.date):todayIso(),required:true},{label:'시작',type:'time',value:b?b.start:'19:00',required:true},{label:'끝 (시작을 정하면 1시간 뒤로 맞춰져요)',type:'time',value:b?b.end:'20:00',required:true},{label:'이용권',value:b?b.pass_id:(schedule.passes[0]?schedule.passes[0].id:''),options:opts},{label:'상태',value:b?(b.status||'booked'):'booked',options:[{value:'booked',label:'예약됨'},{value:'waiting',label:'예약 대기'}]}],okLabel:'저장',onChange:(ins,changed)=>{if(changed===ins[2]&&ins[2].value)ins[3].value=hourLater(ins[2].value)}});
+  const v=await ask({title:copy?'예약 복사해서 만들기':b?'예약 수정':'예약 추가',fields:[{label:'수업·운동 (예: 발레)',value:b?b.title:'',required:true},{label:copy?'날짜 (복사하면 1주 뒤로 채워져요)':'날짜',type:'date',value:b?(copy?shiftIso(b.date,7):b.date):todayIso(),required:true},{label:'시작',type:'time',value:b?b.start:'19:00',required:true},{label:'끝',type:'time',value:b?b.end:'20:00',required:true},{label:'이용권',value:b?b.pass_id:(schedule.passes[0]?schedule.passes[0].id:''),options:opts},{label:'상태',value:b?(b.status||'booked'):'booked',options:[{value:'booked',label:'예약됨'},{value:'waiting',label:'예약 대기'}]}],okLabel:'저장',onChange:(ins,changed)=>{if(changed===ins[2]&&/^\d{2}:\d{2}$/.test(ins[2].value))ins[3].value=hourLater(ins[2].value)}});
   if(!v)return;await schedSave('bookings',{...(b&&!copy?{id:b.id}:{}),title:v[0],date:v[1],start:v[2],end:v[3],pass_id:v[4],status:v[5]})
 }
 function captureJobText(j){
@@ -568,11 +566,17 @@ function drawCollectionPickerList(){const el=$('collection-picker-list');el.repl
 function openCollectionPicker(x){collectionPickerTarget=x;$('collection-picker-search').value='';drawCollectionPickerList();$('collection-picker-dialog').showModal()}
 $('collection-picker-search').oninput=drawCollectionPickerList;$('collection-picker-close').onclick=()=>$('collection-picker-dialog').close();
 /* 날짜·시간 입력칸을 앱 스타일 선택 창으로 바꾼다. 원래 input은 숨긴 채 값(YYYY-MM-DD / HH:MM)을 그대로 들고 있어
-   기존 코드의 .value 읽기·쓰기, input/change 이벤트가 그대로 동작한다. */
+   기존 코드의 .value 읽기·쓰기, input/change 이벤트가 그대로 동작한다. 시간은 선택 창 없이 직접 입력(1분 단위), 칸을 누르면 비워지고 아무것도 안 치고 나가면 원래 값으로 돌아간다. */
 const PICK_WD=['일','월','화','수','목','금','토'];
 function pickerLabel(kind,v){if(!v)return kind==='date'?'날짜 선택':'시간 선택';if(kind==='time')return v;const[y,m,d]=v.split('-').map(Number);const dt=new Date(y,m-1,d);return y+'년 '+m+'월 '+d+'일 ('+PICK_WD[dt.getDay()]+')'}
+function normalizeTime(v){v=String(v||'').trim();if(!v)return '';const m=v.match(/^(\d{1,2})[:.\s]?(\d{2})?$/)||v.match(/^(\d)(\d{2})$/);
+  const d=v.replace(/\D/g,'');if(!d||/[^\d:.\s]/.test(v))return v;let h,mi;if(/[:.\s]/.test(v)&&m){h=+m[1];mi=+(m[2]||0)}else if(d.length<=2){h=+d;mi=0}else if(d.length===3){h=+d[0];mi=+d.slice(1)}else if(d.length===4){h=+d.slice(0,2);mi=+d.slice(2)}else return v;
+  return h<24&&mi<60?String(h).padStart(2,'0')+':'+String(mi).padStart(2,'0'):v}
 function upgradePicker(input){
   const kind=input.type;if((kind!=='date'&&kind!=='time')||input.dataset.picker)return;input.dataset.picker=kind;
+  if(kind==='time'){input.type='text';input.inputMode='numeric';input.maxLength=5;input.placeholder='예: 0930, 17:45';input.classList.add('time-typed');
+    let before='';input.addEventListener('focus',()=>{before=input.value;input.value=''});
+    input.addEventListener('blur',()=>{if(!input.value.trim()&&before){input.value=before;return}const n=normalizeTime(input.value);if(n!==input.value){input.value=n;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}))}});return}
   const proto=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
   const btn=document.createElement('button');btn.type='button';btn.className='picker-btn';
   const panel=document.createElement('div');panel.className='picker-panel';panel.hidden=true;
@@ -580,7 +584,7 @@ function upgradePicker(input){
   const paint=()=>{const v=proto.get.call(input);btn.textContent=pickerLabel(kind,v);btn.classList.toggle('empty',!v)};
   Object.defineProperty(input,'value',{configurable:true,get(){return proto.get.call(input)},set(v){proto.set.call(input,v);paint()}});
   const pick=v=>{input.value=v;input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}))};
-  let month=null,hour=null;
+  let month=null;
   const draw=()=>{panel.replaceChildren();const v=input.value;
     if(kind==='date'){
       const base=month||(v||isoDate(new Date())).slice(0,7);const[y,m]=base.split('-').map(Number);
@@ -599,18 +603,12 @@ function upgradePicker(input){
       const tb=document.createElement('button');tb.type='button';tb.textContent='오늘';tb.onclick=()=>{pick(today);close()};
       const cb=document.createElement('button');cb.type='button';cb.textContent='지우기';cb.onclick=()=>{pick('');close()};
       foot.append(tb,cb);panel.append(foot);
-    }else{
-      const[h0,m0]=(v||':').split(':');const hSel=hour??h0;
-      const mkGrid=(title,vals,cur,on)=>{const l=document.createElement('p');l.className='picker-title';l.textContent=title;const g=document.createElement('div');g.className='picker-grid';
-        for(const x of vals){const b=document.createElement('button');b.type='button';b.textContent=x;if(x===cur)b.className='on';b.onclick=()=>on(x);g.append(b)}panel.append(l,g)};
-      mkGrid('시',Array.from({length:24},(_,i)=>String(i).padStart(2,'0')),hSel,h=>{hour=h;if(m0){pick(h+':'+m0);hour=null}draw()});
-      mkGrid('분',Array.from({length:12},(_,i)=>String(i*5).padStart(2,'0')),hour===null?m0:'',mm=>{const h=hour??h0??'09';pick((h||'09')+':'+mm);hour=null;close()});
     }};
   const close=()=>{panel.hidden=true;btn.classList.remove('open')};
-  btn.onclick=e=>{e.preventDefault();if(!panel.hidden){close();return}month=null;hour=null;draw();panel.hidden=false;btn.classList.add('open')};
+  btn.onclick=e=>{e.preventDefault();if(!panel.hidden){close();return}month=null;draw();panel.hidden=false;btn.classList.add('open')};
   input.after(btn,panel);paint();
 }
-function ask({title,message='',fields=[],okLabel='확인',danger=false,onChange=null}){const d=$('ask-dialog'),ok=$('ask-ok');$('ask-title').textContent=title;$('ask-message').textContent=message;const box=$('ask-fields');box.replaceChildren();const inputs=fields.map(f=>{const label=document.createElement('label');label.textContent=f.label;const input=document.createElement(f.options?'select':'input');for(const o of f.options||[]){const op=document.createElement('option');op.value=o.value;op.textContent=o.label;input.append(op)}input.placeholder=f.placeholder||'';input.value=f.value||'';if(f.type)input.type=f.type;if(f.type==='checkbox'){input.checked=f.value===true;label.className='ask-toggle'}input.autocapitalize='off';label.append(input);box.append(label);upgradePicker(input);return input});if(onChange)inputs.forEach(inp=>inp.addEventListener('input',()=>onChange(inputs,inp)));ok.textContent=okLabel;ok.classList.toggle('danger',danger);return new Promise(resolve=>{let done=false;const finish=v=>{if(done)return;done=true;if(d.open)d.close();resolve(v)};ok.onclick=()=>{const empty=inputs.find((inp,i)=>fields[i].required&&!inp.value.trim());if(empty){(empty.dataset.picker?empty.nextElementSibling:empty).focus();return}finish(fields.length?inputs.map(inp=>inp.type==='checkbox'?inp.checked:inp.value.trim()):true)};$('ask-cancel').onclick=()=>finish(null);d.oncancel=()=>finish(null);d.onclose=()=>{if(!d.open)finish(null)};inputs.forEach(inp=>inp.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();ok.click()}});d.showModal()})}
+function ask({title,message='',fields=[],okLabel='확인',danger=false,onChange=null}){const d=$('ask-dialog'),ok=$('ask-ok');$('ask-title').textContent=title;$('ask-message').textContent=message;const box=$('ask-fields');box.replaceChildren();const inputs=fields.map(f=>{const label=document.createElement('label');label.textContent=f.label;const input=document.createElement(f.options?'select':'input');for(const o of f.options||[]){const op=document.createElement('option');op.value=o.value;op.textContent=o.label;input.append(op)}input.placeholder=f.placeholder||'';input.value=f.value||'';if(f.type)input.type=f.type;if(f.type==='checkbox'){input.checked=f.value===true;label.className='ask-toggle'}input.autocapitalize='off';label.append(input);box.append(label);upgradePicker(input);return input});if(onChange)inputs.forEach(inp=>inp.addEventListener('input',()=>onChange(inputs,inp)));ok.textContent=okLabel;ok.classList.toggle('danger',danger);return new Promise(resolve=>{let done=false;const finish=v=>{if(done)return;done=true;if(d.open)d.close();resolve(v)};ok.onclick=()=>{inputs.forEach(inp=>{if(inp.classList.contains('time-typed'))inp.value=normalizeTime(inp.value)});const bad=inputs.find(inp=>inp.classList.contains('time-typed')&&inp.value&&!/^\d{2}:\d{2}$/.test(inp.value));if(bad){notice('시간은 0930 또는 09:30처럼 입력해 주세요.');bad.focus();return}const empty=inputs.find((inp,i)=>fields[i].required&&!inp.value.trim());if(empty){(empty.dataset.picker?empty.nextElementSibling:empty).focus();return}finish(fields.length?inputs.map(inp=>inp.type==='checkbox'?inp.checked:inp.value.trim()):true)};$('ask-cancel').onclick=()=>finish(null);d.oncancel=()=>finish(null);d.onclose=()=>{if(!d.open)finish(null)};inputs.forEach(inp=>inp.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing){e.preventDefault();ok.click()}});d.onkeydown=e=>{if(e.key==='Enter'&&!e.isComposing&&!fields.length&&e.target.id!=='ask-cancel'){e.preventDefault();ok.click()}};d.showModal();if(!fields.length)ok.focus()})}
 async function addCollectionEntry(x){const v=await ask({title:'모음에 링크 추가',fields:[{label:'링크 주소',placeholder:'https://',type:'url',required:true},{label:'표시할 이름 (선택)',placeholder:'비우면 주소에서 자동으로 만들어요'}],okLabel:'추가'});if(!v)return;const[url,label]=v;try{const out=await api('/api/collections/entries',{id:x.id,url,title:label});x.entries=out.entries;notice('링크를 추가했어요.');refresh()}catch(e){notice(e.message)}}
 function photosOf(x){const photoEntries=x.entries?x.entries.filter(e=>e.thumbnail):[];return photoEntries.length>1?photoEntries.map(e=>e.thumbnail):x.thumbnail}
 function openLightbox(images,alt){const list=Array.isArray(images)?images:[images];const track=$('lightbox-track');track.replaceChildren();for(const src of list){const slide=document.createElement('div');slide.className='lightbox-slide';const img=document.createElement('img');img.src=src;img.alt=alt||'';img.onload=()=>{if(img.naturalHeight>img.naturalWidth*2.2)img.classList.add('tall-photo')};slide.append(img);track.append(slide)}const dots=$('lightbox-dots');dots.replaceChildren();dots.hidden=list.length<=1;$('lightbox-prev').hidden=list.length<=1;$('lightbox-next').hidden=list.length<=1;for(let i=0;i<list.length;i++){const d=document.createElement('span');if(i===0)d.className='active';dots.append(d)}track.scrollLeft=0;lockBodyScroll();$('lightbox').showModal();history.pushState({lightbox:true},'');lbHistoryPushed=true}
