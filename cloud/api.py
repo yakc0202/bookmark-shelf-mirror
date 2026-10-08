@@ -24,7 +24,7 @@ S3 = boto3.client('s3', config=Config(signature_version='s3v4',s3={'addressing_s
 LAMBDA_CLIENT = boto3.client('lambda')
 BUCKET = os.environ['DATA_BUCKET']
 KEY = 'data/cards.json'
-PUBLIC_FIELDS = ('id','url','title','summary','folder','tags','thumbnail','status','source','note','created','error','transcript','place_url','attachment_url','reason','topic')
+PUBLIC_FIELDS = ('id','url','title','summary','folder','tags','thumbnail','status','source','note','created','error','transcript','place_url','attachment_url','reason','topic','ends_on')
 
 class Problem(Exception):
     def __init__(self, status, message):
@@ -58,6 +58,17 @@ def transact(change):
                 raise
             time.sleep(random.uniform(.02,.1) * (attempt+1))
     raise Problem(409,'동시에 다른 변경이 저장됐습니다. 다시 시도해 주세요.')
+
+PAST_EVENTS='지난 행사'
+
+def move_ended_events(data,now):
+    # 기간이 끝난 행사 카드(ends_on이 한국 시간 오늘보다 이전)를 '지난 행사' 폴더로 한 번만 옮긴다.
+    # 사용자가 다시 다른 폴더로 옮기면 event_ended 표시 때문에 또 옮기지 않는다.
+    today=time.strftime('%Y-%m-%d',time.gmtime(now+9*3600))
+    for x in data['items']:
+        if x.get('deleted') or x.get('event_ended') or not x.get('ends_on') or x['ends_on']>=today:continue
+        x['folder_before_end']=x.get('folder','');x['folder']=PAST_EVENTS;x['event_ended']=True
+        x['revision']=x.get('revision',1)+1
 
 def find(data, item_id):
     for item in data['items']:
@@ -466,6 +477,7 @@ def change(data, path, body):
         if item['status']=='ready':return {'id':item['id'],'message':'"나중에 다시 보기"에 저장했어요.'}
         return {'id':item['id'],'message':'저장했어요. 자동 정리합니다.'}
     if path=='/worker/claim':
+        move_ended_events(data,now)
         def pending(x):
             return (x['status']=='queued' or
                 (x['status']=='processing' and x.get('lease_until',0)<now) or
@@ -475,7 +487,7 @@ def change(data, path, body):
         if not candidates:return {'item':None}
         item=min(candidates,key=lambda x:x['created'])
         item.update(status='processing',lease=secrets.token_urlsafe(24),lease_until=now+600)
-        return {'item':copy.deepcopy(item),'folders':sorted(set(x['folder'] for x in data['items'] if not x.get('deleted')))}
+        return {'item':copy.deepcopy(item),'folders':sorted(set(x['folder'] for x in data['items'] if not x.get('deleted') and x['folder']!=PAST_EVENTS))}
     if path=='/worker/complete' and body.get('kind')=='memo-extract':
         memo=next((m for m in data.get('memos',[]) if m['id']==body.get('id')),None)
         if not memo or memo.get('lease')!=body.get('lease') or memo.get('revision',1)!=body.get('revision'):
@@ -530,6 +542,10 @@ def change(data, path, body):
         for key,limit in [('title',160),('summary',2000),('folder',100),('tags',2000),('thumbnail',4000),('source',100),('error',250),('transcript',4000),('place_url',300)]:
             if key in result:item[key]=str(result[key])[:limit]
         if item.get('thumbnail') and not item['thumbnail'].startswith('https://'):item['thumbnail']=''
+        if 'ends_on' in result:
+            ends=str(result['ends_on']).strip()
+            if re.fullmatch(r'\d{4}-\d{2}-\d{2}',ends):item['ends_on']=ends
+            else:item.pop('ends_on',None)
         # 모음(이어진 글) 카드에만, 사용자가 정한 주제가 없을 때 AI가 추론한 주제를 넣는다
         if str(result.get('topic','')).strip() and not item.get('topic') and any(e.get('kind')=='link' for e in item.get('entries') or []):
             item['topic']=str(result['topic']).strip()[:30]
