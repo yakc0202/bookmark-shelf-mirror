@@ -106,6 +106,7 @@ html.phone #grid,html.phone .card,html.phone #search{width:100%;max-width:100%;m
 .sched-cal-tag{font-size:10px;line-height:1.35;padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sched-cal-tag.t-event{background:#f1dbe2}.sched-cal-tag.t-gym{background:var(--gym-bg,#e2ddf4)}.sched-cal-tag.t-todo{background:#f3e8bf}
 .sched-cal-more{font-size:10px;color:#7a7c86}
+.sched-item.overdue .sched-item-meta{color:#b8463a;font-weight:600}
 html .sched-item.t-event.t-job{border-left-color:#5b8fd0}html .t-event.t-job .hl{background:#cfe1fb}html .sched-cal-tag.t-event.t-job{background:#cfe1fb}
 .sched-job-toggle{width:auto!important;justify-content:flex-start;gap:8px!important;font-size:13px;color:#5d5f69;align-self:flex-start;margin:0 0 4px}
 .sched-job-swatch{display:inline-block;width:18px;height:12px;background:#cfe1fb;border-left:4px solid #5b8fd0}
@@ -286,11 +287,14 @@ function drawSchedule(){
 }
 function schedHead(box,title){const h=mk('div','sched-head');h.append(mk('h2','marker',title));box.append(h);return h}
 
-async function editTodo(t,date,copy){const v=await ask({title:copy?'할 일 복사해서 만들기':t?'할 일 수정':'할 일 추가',fields:[{label:'할 일',value:t?t.title:'',required:true},{label:'날짜(선택 — 비우면 오늘 할 일에 계속 보여요)',type:'date',value:t?t.due:(date&&date!==todayIso()?date:'')}],okLabel:'저장'});if(!v)return;await schedSave('todos',{...(t&&!copy?{id:t.id,done:t.done,note:t.note}:{}),...(copy?{note:t.note}:{}),title:v[0],minutes:t?t.minutes:30,due:v[1]})}
+function todoDueText(t){if(!t.due)return '기한 없음';const today=todayIso();if(t.due===today)return '오늘까지';
+  const n=Math.round((parseIso(t.due)-parseIso(today))/86400000);return n<0?shortDate(t.due)+'까지 · '+(-n)+'일 지남':shortDate(t.due)+'까지 · D-'+n}
+async function editTodo(t,date,copy){const v=await ask({title:copy?'할 일 복사해서 만들기':t?'할 일 수정':'할 일 추가',fields:[{label:'할 일',value:t?t.title:'',required:true},{label:'언제까지 (비우면 기한 없음)',type:'date',value:t?t.due:(date||todayIso())}],okLabel:'저장'});if(!v)return;await schedSave('todos',{...(t&&!copy?{id:t.id,done:t.done,note:t.note}:{}),...(copy?{note:t.note}:{}),title:v[0],minutes:t?t.minutes:30,due:v[1]})}
 async function editEvent(e,date,copy){const v=await ask({title:copy?'일정 복사해서 만들기':e?'일정 수정':'일정 추가',fields:[{label:'일정',value:e?e.title:'',required:true},{label:copy?'날짜 (복사하면 1주 뒤로 채워져요)':'날짜',type:'date',value:e?(copy?shiftIso(e.date,7):e.date):(date||todayIso()),required:true},{label:'시작',type:'time',value:e?e.start:'10:00',required:true},{label:'끝',type:'time',value:e?e.end:'11:00',required:true},{label:'입사지원 일정',type:'checkbox',value:!!(e&&e.job)}],okLabel:'저장',onChange:(ins,changed)=>{if(changed===ins[2]&&/^\d{2}:\d{2}$/.test(ins[2].value))ins[3].value=hourLater(ins[2].value)}});if(!v)return;await schedSave('events',{...(e&&!copy?{id:e.id}:{}),title:v[0],date:v[1],start:v[2],end:v[3],job:v[4]===true})}
 async function toggleTodo(t){await schedSave('todos',{id:t.id,title:t.title,minutes:t.minutes,due:t.due,note:t.note,done:!t.done})}
 
-/* 오늘: 그날의 일정(운동 예약 포함, 예약 대기는 빼고)과 할 일을 목록으로. 일정은 끝난 시간이 지나면 체크·아래로, 할 일은 직접 체크하면 아래로. */
+/* 할 일은 "언제까지"(마감)가 있는 일. 오늘 목록에는 끝내지 않은 할 일 중 마감이 7일 이내(지난 것 포함)이거나 기한 없는 것을 마감 급한 순으로, 다른 날에는 그날이 마감인 할 일.
+   오늘: 그날의 일정(운동 예약 포함, 예약 대기는 빼고)과 할 일을 목록으로. 일정은 끝난 시간이 지나면 체크·아래로, 할 일은 직접 체크하면 아래로. */
 function dayEntries(date){
   const today=todayIso(),now=new Date(),nowMin=now.getHours()*60+now.getMinutes();
   const over=(e)=>date<today||(date===today&&hm(e.end)<=nowMin);
@@ -299,7 +303,7 @@ function dayEntries(date){
   if(gymOn())for(const b of schedule.bookings)if(b.date===date&&!isWaiting(b))out.push({kind:'gym',title:b.title,time:b.start+'~'+b.end,sort:b.start,done:over(b),ref:b});
   for(const t of schedule.todos){
     const doneDay=t.done&&t.done_at?isoDate(new Date(t.done_at*1000)):'';
-    const show=date===today?(t.done?(doneDay===today||t.due===today):(!t.due||t.due<=today)):(t.due===date);
+    const show=date===today?(t.done?doneDay===today:(!t.due||t.due<=shiftIso(today,7))):(t.due===date);
     if(show)out.push({kind:'todo',title:t.title,time:'',sort:'~'+(t.due||'9999')+String(t.created).padStart(14,'0'),done:t.done,ref:t});
   }
   const rank=x=>x.kind==='todo'?1:0;
@@ -333,7 +337,8 @@ function drawSchedToday(box){
     if(r.time)line.append(mk('span','sched-time-inline',r.time));
     line.append(mk('span','sched-item-title hl',r.title));
     main.append(line);
-    const meta=r.kind==='gym'?'운동':r.kind==='event'?(r.job?'입사지원':'일정'):(r.ref.due&&r.ref.due!==date?'마감 '+shortDate(r.ref.due)+' '+dDay(r.ref.due):'');
+    const meta=r.kind==='gym'?'운동':r.kind==='event'?(r.job?'입사지원':'일정'):todoDueText(r.ref);
+    if(r.kind==='todo'&&!r.done&&r.ref.due&&r.ref.due<todayIso())row.classList.add('overdue');
     if(meta)main.append(mk('span','sched-item-meta',meta));
     main.onclick=()=>r.kind==='todo'?editTodo(r.ref):r.kind==='event'?editEvent(r.ref):editBooking(r.ref);
     const del=mk('button','sched-del','×');del.type='button';del.setAttribute('aria-label','삭제');
@@ -359,7 +364,7 @@ function todoRow(t){
   const row=mk('div','sched-item t-todo'+(t.done?' done':''));
   const c=mk('button','sched-check'+(t.done?' on':''),t.done?'✓':'');c.type='button';c.setAttribute('aria-label',t.done?'완료 취소':'완료');c.onclick=()=>toggleTodo(t);
   const main=mk('div','sched-item-main');main.append(mk('span','sched-item-title',t.title));
-  main.append(mk('span','sched-item-meta',t.due?'날짜 '+shortDate(t.due)+' '+dDay(t.due):'날짜 없음'));
+  main.append(mk('span','sched-item-meta',todoDueText(t)));if(!t.done&&t.due&&t.due<todayIso())row.classList.add('overdue');
   main.onclick=()=>editTodo(t);
   const del=mk('button','sched-del','×');del.type='button';del.setAttribute('aria-label','삭제');del.onclick=()=>schedRemove('todos',t.id,t.title);
   row.append(c,main,copyButton(()=>editTodo(t,null,true)),del);return row;
