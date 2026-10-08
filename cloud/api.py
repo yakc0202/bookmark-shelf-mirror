@@ -314,6 +314,40 @@ def change(data, path, body):
         other['deleted']=True
         other['revision']=other.get('revision',1)+1
         return {'id':item['id'],'entries':item['entries'],'message':'사진을 합쳤어요.'}
+    if path in ('/api/collections/move','/api/collections/unmove'):
+        # 카드를 모음으로 옮김: 링크(이어진 글 포함)를 모음에 담고 홈의 원래 카드는 지움(복원 가능). unmove는 되돌리기.
+        target=find(data,body.get('id'))
+        if target.get('kind')!='collection' or target.get('deleted'):raise Problem(400,'모음이 아닙니다.')
+        item=find(data,body.get('item_id'))
+        if item.get('kind') in ('collection','photo') or not item.get('url'):raise Problem(400,'모음으로 옮길 수 없는 카드입니다.')
+        entries=target.setdefault('entries',[])
+        links=[(item['url'],item.get('title') or urllib.parse.urlsplit(item['url']).hostname or item['url'],item.get('thumbnail') or '')]
+        links+=[(e['url'],e.get('title') or e['url'],e.get('thumbnail') or '') for e in item.get('entries') or [] if e.get('kind')=='link' and e.get('url')]
+        if path=='/api/collections/unmove':
+            start,count=body.get('start'),body.get('count')
+            if not isinstance(start,int) or not isinstance(count,int) or start<0 or count<0:raise Problem(400,'잘못된 요청입니다.')
+            urls={u for u,_,_ in links}
+            moved=entries[start:start+count]
+            if len(moved)!=count or any(e.get('url') not in urls for e in moved):raise Problem(409,'모음이 그사이 바뀌어 되돌릴 수 없습니다.')
+            del entries[start:start+count]
+            item['deleted']=False
+            item['revision']=item.get('revision',1)+1;target['revision']=target.get('revision',1)+1
+            return {'id':item['id'],'message':'되돌렸어요.'}
+        if item.get('deleted'):raise Problem(404,'삭제된 카드입니다.')
+        have={e.get('url') for e in entries}
+        new=[]
+        for url,title,thumb in links:
+            if url in have:continue
+            have.add(url)
+            new.append({'kind':'link','url':url,'title':str(title)[:160],**({'thumbnail':thumb} if str(thumb).startswith('https://') else {})})
+        if len(entries)+len(new)>50:raise Problem(400,'모음은 링크 50개까지 담을 수 있습니다.')
+        start=len(entries)
+        entries.extend(new)
+        item['deleted']=True;item['deleted_at']=now
+        shares=data.get('shares',{})
+        for key in [k for k,v in shares.items() if v['item_id']==item['id']]:del shares[key]
+        item['revision']=item.get('revision',1)+1;target['revision']=target.get('revision',1)+1
+        return {'id':target['id'],'start':start,'count':len(new),'message':'모음으로 옮겼어요.'}
     if path in ('/api/collections/entries','/api/collections/entries/remove'):
         item=find(data,body.get('id'))
         entries=item.setdefault('entries',[])
@@ -534,7 +568,7 @@ def handler(event, context):
         if method=='GET' and path.startswith('/s/'):
             data,_=read()
             return shared_page(data,path[3:])
-        allowed=('/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/items/to-collection','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/worker/claim','/worker/complete')
+        allowed=('/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/worker/claim','/worker/complete')
         if path not in allowed:raise Problem(404,'없는 주소입니다.')
         expected=os.environ['WORKER_TOKEN_HASH'] if path.startswith('/worker/') else os.environ['CLIENT_TOKEN_HASH']
         supplied=event.get('headers',{}).get('authorization','')
