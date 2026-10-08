@@ -70,6 +70,84 @@ def move_ended_events(data,now):
         x['folder_before_end']=x.get('folder','');x['folder']=PAST_EVENTS;x['event_ended']=True
         x['revision']=x.get('revision',1)+1
 
+SCHEDULE_KINDS=('todos','events','routines','passes','bookings')
+
+def schedule_of(data):
+    sched=data.setdefault('schedule',{})
+    for k in SCHEDULE_KINDS:sched.setdefault(k,[])
+    sched.setdefault('settings',{'day_start':'08:00','day_end':'24:00'})
+    sched.setdefault('jobs',[])
+    return sched
+
+def clean_schedule_item(kind,body,old,now,sched):
+    """일정 데이터 한 건을 검사해 저장할 형태로 만든다. 잘못된 값이면 Problem."""
+    def text(key,limit,required=False):
+        v=str(body.get(key,'')).strip()[:limit]
+        if required and not v:raise Problem(400,'이름을 입력해 주세요.')
+        return v
+    def date(key,required=True):
+        v=str(body.get(key,'')).strip()
+        if not v and not required:return ''
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',v):raise Problem(400,'날짜를 확인해 주세요.')
+        return v
+    def clock(key):
+        v=str(body.get(key,'')).strip()
+        if not re.fullmatch(r'([01]\d|2[0-4]):[0-5]\d',v) or v>'24:00':raise Problem(400,'시간을 확인해 주세요.')
+        return v
+    def whole(key,low,high,default):
+        v=body.get(key,default)
+        if not isinstance(v,int) or isinstance(v,bool) or not low<=v<=high:raise Problem(400,'숫자를 확인해 주세요.')
+        return v
+    base={'id':old['id'] if old else secrets.token_hex(10),'created':old['created'] if old else now}
+    if kind=='todos':
+        done=bool(body.get('done',False))
+        return {**base,'title':text('title',200,True),'minutes':whole('minutes',5,720,30),'due':date('due',False),
+                'note':text('note',1000),'done':done,'done_at':(old.get('done_at') if old and old.get('done') and done else (now if done else 0))}
+    if kind in ('events','bookings','routines'):
+        start,end=clock('start'),clock('end')
+        if end<=start:raise Problem(400,'끝나는 시간이 시작보다 늦어야 해요.')
+        if kind=='routines':
+            days=body.get('days')
+            if not isinstance(days,list) or not days or any(not isinstance(d,int) or isinstance(d,bool) or not 0<=d<=6 for d in days):
+                raise Problem(400,'요일을 하나 이상 골라 주세요.')
+            kind_of=body.get('type','routine')
+            if kind_of not in ('routine','meal'):raise Problem(400,'루틴 종류를 확인해 주세요.')
+            return {**base,'title':text('title',100,True),'start':start,'end':end,'days':sorted(set(days)),'type':kind_of}
+        item={**base,'title':text('title',100,True),'date':date('date'),'start':start,'end':end,'note':text('note',500)}
+        if kind=='bookings':
+            pass_id=str(body.get('pass_id','')).strip()
+            if pass_id and not any(x['id']==pass_id for x in sched['passes']):raise Problem(400,'이용권을 찾을 수 없어요.')
+            item['pass_id']=pass_id
+            status=body.get('status','booked')
+            if status not in ('booked','waiting'):raise Problem(400,'예약 상태를 확인해 주세요.')
+            item['status']=status
+        return item
+    if kind=='passes':
+        return {**base,'title':text('title',100,True),'total':whole('total',1,1000,10),'expires':date('expires',False),
+                'note':text('note',500)}
+    raise Problem(400,'알 수 없는 일정 종류입니다.')
+
+def norm_title(t):
+    return re.sub(r'\s+','',str(t or '')).lower()
+
+def merge_captured_bookings(sched,found,now):
+    """캡처에서 읽은 예약을 넣는다. 같은 수업·날짜·시작 시간이면 새로 넣지 않고 상태·끝 시간만 고친다.
+    확정 예약은 이름이 들어간 이용권이 딱 하나면 그 이용권에 연결한다(대기는 연결하지 않음)."""
+    added=updated=0
+    for b in found:
+        key=(norm_title(b['title']),b['date'],b['start'])
+        old=next((x for x in sched['bookings'] if (norm_title(x['title']),x['date'],x['start'])==key),None)
+        if old:
+            if old.get('status','booked')!=b['status'] or old['end']!=b['end']:
+                old.update(status=b['status'],end=b['end']);updated+=1
+            continue
+        passes=[p for p in sched['passes'] if norm_title(b['title']) and norm_title(b['title']) in norm_title(p['title'])]
+        sched['bookings'].append({'id':secrets.token_hex(10),'created':now,'title':b['title'],'date':b['date'],'start':b['start'],
+                                  'end':b['end'],'note':'캡처로 추가','status':b['status'],
+                                  'pass_id':passes[0]['id'] if b['status']=='booked' and len(passes)==1 else ''})
+        added+=1
+    return added,updated
+
 def find(data, item_id):
     for item in data['items']:
         if item['id'] == item_id: return item
@@ -208,6 +286,42 @@ def change(data, path, body):
         if old:habits[habits.index(old)]=habit
         else:habits.append(habit)
         return habit
+    if path=='/api/schedule/save':
+        sched=schedule_of(data)
+        kind=body.get('kind')
+        if kind=='settings':
+            start,end=str(body.get('day_start','')).strip(),str(body.get('day_end','')).strip()
+            for v in (start,end):
+                if not re.fullmatch(r'([01]\d|2[0-4]):[0-5]\d',v) or v>'24:00':raise Problem(400,'시간을 확인해 주세요.')
+            sched['settings']={'day_start':start,'day_end':end}
+            return sched['settings']
+        if kind not in SCHEDULE_KINDS:raise Problem(400,'알 수 없는 일정 종류입니다.')
+        rows=sched[kind]
+        item_id=body.get('id')
+        old=next((x for x in rows if x['id']==item_id),None)
+        if item_id and not old:raise Problem(404,'항목을 찾을 수 없어요.')
+        if not old and len(rows)>=2000:raise Problem(400,'항목이 너무 많아요.')
+        item=clean_schedule_item(kind,body,old,now,sched)
+        if old:rows[rows.index(old)]=item
+        else:rows.append(item)
+        return item
+    if path=='/api/schedule/import':
+        sched=schedule_of(data)
+        sched['jobs']=[j for j in sched['jobs'] if j['status'] in ('queued','processing','ai_waiting') or now-j['created']<7*86400][-40:]
+        job={'id':secrets.token_hex(10),'kind':'schedule-import','image_key':body['_photo_key'],'status':'queued','created':now,'revision':1,'added':0,'updated':0,'error':''}
+        sched['jobs'].append(job)
+        return {'id':job['id'],'message':'캡처를 올렸어요. 읽는 대로 예약에 넣을게요.'}
+    if path=='/api/schedule/delete':
+        sched=schedule_of(data)
+        kind=body.get('kind')
+        if kind not in SCHEDULE_KINDS:raise Problem(400,'알 수 없는 일정 종류입니다.')
+        old=next((x for x in sched[kind] if x['id']==body.get('id')),None)
+        if not old:raise Problem(404,'항목을 찾을 수 없어요.')
+        sched[kind].remove(old)
+        if kind=='passes':
+            for b in sched['bookings']:
+                if b.get('pass_id')==old['id']:b['pass_id']=''
+        return {'message':'삭제했어요.'}
     if path=='/api/ledger/save':
         ledger=data.setdefault('ledger',[])
         entry_id=body.get('id')
@@ -223,6 +337,7 @@ def change(data, path, body):
         entry={'id':entry_id or secrets.token_hex(10),'date':date,'kind':kind,'amount':amount,
                'category':str(body.get('category','')).strip()[:30] or '기타','memo':str(body.get('memo','')).strip()[:200],
                'created':old['created'] if old else now}
+        if old and old.get('plan_id'):entry['plan_id']=old['plan_id']
         if old:ledger[ledger.index(old)]=entry
         else:ledger.append(entry)
         return entry
@@ -252,6 +367,10 @@ def change(data, path, body):
               'done_date':old.get('done_date','') if old else '','created':old['created'] if old else now}
         if old:plans[plans.index(old)]=plan
         else:plans.append(plan)
+        entry=next((e for e in data.get('ledger',[]) if plan['entry_id'] and e['id']==plan['entry_id']),None)
+        if entry:
+            entry.update(amount=plan['amount'],category=plan['category'])
+            if entry.get('memo','')==old['title']:entry['memo']=plan['title']
         return plan
     if path=='/api/ledger/plans/delete':
         plans=data.setdefault('ledger_plans',[])
@@ -484,6 +603,7 @@ def change(data, path, body):
                 (x['status']=='ai_waiting' and x.get('retry_at',0)<now))
         candidates=[x for x in data['items'] if not x.get('deleted') and pending(x)]
         candidates+=[m for m in data.get('memos',[]) if m.get('kind') in ('memo-extract','memo-summary') and pending(m)]
+        candidates+=[j for j in data.get('schedule',{}).get('jobs',[]) if pending(j)]
         if not candidates:return {'item':None}
         item=min(candidates,key=lambda x:x['created'])
         item.update(status='processing',lease=secrets.token_urlsafe(24),lease_until=now+600)
@@ -505,6 +625,26 @@ def change(data, path, body):
         memo.pop('lease',None);memo.pop('lease_until',None)
         memo['revision']=memo.get('revision',1)+1
         return {'message':'추출 결과를 저장했어요.'}
+    if path=='/worker/complete' and body.get('kind')=='schedule-import':
+        sched=schedule_of(data)
+        job=next((j for j in sched['jobs'] if j['id']==body.get('id')),None)
+        if not job or job.get('lease')!=body.get('lease') or job.get('revision',1)!=body.get('revision'):
+            raise Problem(409,'이미 처리된 캡처라 결과를 적용하지 않았습니다.')
+        result=body.get('result',{})
+        status=result.get('status')
+        if status not in ('ready','needs_content','ai_waiting'):raise Problem(400,'잘못된 처리 상태입니다.')
+        job.pop('lease',None);job.pop('lease_until',None)
+        job['status']=status;job['error']=str(result.get('error',''))[:200]
+        job['retry_at']=now+3600 if status=='ai_waiting' else 0
+        if status=='ready':
+            found=[]
+            for b in result.get('bookings') or []:
+                try:found.append(clean_schedule_item('bookings',{**b,'pass_id':''},None,now,sched))
+                except Problem:continue
+            job['added'],job['updated']=merge_captured_bookings(sched,found,now)
+            if not found:job['error']='캡처에서 예약을 찾지 못했어요.'
+        job['revision']=job.get('revision',1)+1
+        return {'message':'처리 결과를 저장했어요.'}
     if path=='/worker/complete' and body.get('kind')=='memo-summary':
         memo=next((m for m in data.get('memos',[]) if m['id']==body.get('id')),None)
         if not memo or memo.get('lease')!=body.get('lease') or memo.get('revision',1)!=body.get('revision'):
@@ -584,7 +724,7 @@ def handler(event, context):
         if method=='GET' and path.startswith('/s/'):
             data,_=read()
             return shared_page(data,path[3:])
-        allowed=('/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/worker/claim','/worker/complete')
+        allowed=('/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/schedule','/api/schedule/save','/api/schedule/delete','/api/schedule/import','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/worker/claim','/worker/complete')
         if path not in allowed:raise Problem(404,'없는 주소입니다.')
         expected=os.environ['WORKER_TOKEN_HASH'] if path.startswith('/worker/') else os.environ['CLIENT_TOKEN_HASH']
         supplied=event.get('headers',{}).get('authorization','')
@@ -595,6 +735,8 @@ def handler(event, context):
             data,_=read();return response(200,sorted(data.get('memos',[]),key=lambda m:m['updated'],reverse=True),accept_encoding)
         if method=='GET' and path=='/api/ledger/plans':
             data,_=read();return response(200,sorted(data.get('ledger_plans',[]),key=lambda p:p['created']),accept_encoding)
+        if method=='GET' and path=='/api/schedule':
+            data,_=read();return response(200,schedule_of(data),accept_encoding)
         if method=='GET' and path=='/api/ledger':
             data,_=read();return response(200,sorted(data.get('ledger',[]),key=lambda e:(e['date'],e['created']),reverse=True),accept_encoding)
         if method=='GET' and path=='/api/habits':
@@ -604,17 +746,17 @@ def handler(event, context):
         if method!='POST':raise Problem(405,'지원하지 않는 요청입니다.')
         raw=event.get('body') or '{}'
         if event.get('isBase64Encoded'):raw=base64.b64decode(raw).decode()
-        if len(raw.encode())>(14_000_000 if path in ('/api/photos','/api/attach-photo','/api/memos/photo') else 650000):raise Problem(413,'요청이 너무 큽니다.')
+        if len(raw.encode())>(14_000_000 if path in ('/api/photos','/api/attach-photo','/api/memos/photo','/api/schedule/import') else 650000):raise Problem(413,'요청이 너무 큽니다.')
         body=json.loads(raw)
         if not isinstance(body,dict):raise Problem(400,'JSON 객체가 필요합니다.')
-        if path in ('/api/photos','/api/attach-photo','/api/memos/photo'):
+        if path in ('/api/photos','/api/attach-photo','/api/memos/photo','/api/schedule/import'):
             blob=base64.b64decode(body.get('image',''),validate=True)
             if not 0<len(blob)<=10_000_000 or not blob.startswith(b'\xff\xd8\xff') or not blob.endswith(b'\xff\xd9'):
                 raise Problem(400,'10MB 이하의 JPEG 사진이 필요합니다.')
             key='photos/'+secrets.token_hex(16)+'.jpg'
             S3.put_object(Bucket=BUCKET,Key=key,Body=blob,ContentType='image/jpeg',CacheControl='public, max-age=31536000, immutable')
             if path=='/api/memos/photo':return response(200,{'url':photo_url(key)})
-            body={'id':body.get('id'),'_photo_key':key} if path=='/api/attach-photo' else {'_photo_key':key,'_note':str(body.get('note',''))[:20000]}
+            body={'id':body.get('id'),'_photo_key':key} if path=='/api/attach-photo' else {'_photo_key':key} if path=='/api/schedule/import' else {'_photo_key':key,'_note':str(body.get('note',''))[:20000]}
         if path=='/api/collections/entries':
             body['_thumbnail'],body['_preview_title']=fetch_link_preview(str(body.get('url','')).strip())
         try:
@@ -623,7 +765,7 @@ def handler(event, context):
             # 이미 바뀐 카드의 이전 결과는 적용하지 않되 정상 응답으로 돌려준다(워커가 오류로 멈추지 않고 다음 작업으로 넘어가게)
             if path=='/worker/complete' and e.status==409:return response(200,{'applied':False,'message':e.message})
             raise
-        if path in ('/api/items','/api/photos','/api/memos/extract','/api/memos/save','/api/memos/summarize'):
+        if path in ('/api/items','/api/photos','/api/memos/extract','/api/memos/save','/api/memos/summarize','/api/schedule/import'):
             try:
                 LAMBDA_CLIENT.invoke(FunctionName=os.environ.get('WORKER_FUNCTION','<WORKER_LAMBDA_NAME>'),InvocationType='Event',Payload=b'{}')
             except Exception:

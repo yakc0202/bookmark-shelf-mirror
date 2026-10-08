@@ -61,6 +61,18 @@ class LedgerPlans(unittest.TestCase):
   p=self.plan();self.check(p,True)
   u=self.plan(id=p['id'],amount=160000)
   self.assertTrue(u['done']);self.assertEqual(u['amount'],160000)
+ def test_edit_updates_linked_expense(self):
+  p=self.plan();self.check(p,True)
+  self.plan(id=p['id'],title='관리비 10월',amount=170000,category='생활')
+  e=self.data['ledger'][0]
+  self.assertEqual((e['amount'],e['category'],e['memo'],e['date']),(170000,'생활','관리비 10월','2026-10-07'))
+ def test_custom_memo_kept_and_link_survives_entry_edit(self):
+  p=self.plan();self.check(p,True)
+  e=self.data['ledger'][0]
+  api.change(self.data,'/api/ledger/save',{'id':e['id'],'date':e['date'],'kind':'expense','amount':e['amount'],'category':e['category'],'memo':'카드 결제'})
+  self.assertEqual(self.data['ledger'][0]['plan_id'],p['id'])
+  self.plan(id=p['id'],amount=99000)
+  self.assertEqual((self.data['ledger'][0]['amount'],self.data['ledger'][0]['memo']),(99000,'카드 결제'))
  def test_delete_plan(self):
   p=self.plan()
   api.change(self.data,'/api/ledger/plans/delete',{'id':p['id']})
