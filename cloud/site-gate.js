@@ -1,8 +1,9 @@
 // CloudFront viewer-request 함수(cloudfront-js-2.0). 기본 동작(photos/* 제외)에 연결한다.
 // __CLIENT_TOKEN_HASH__ 는 cloud/deploy_gate.py 가 배포 시 API Lambda 환경변수 값으로 채운다.
+// HOST 자리는 cloud/deploy_gate.py 가 cloud/site.json 의 site_domain 으로 채운다(그 외 호스트는 이 도메인으로 301).
 import crypto from 'crypto';
 
-const HOST = '<SITE_DOMAIN>';
+const HOST = '__SITE_DOMAIN__';
 const KEY_HASH = '__CLIENT_TOKEN_HASH__';
 const PUBLIC = ['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png', '/favicon.ico'];
 

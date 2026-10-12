@@ -8,12 +8,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-NAME = '<GATE_FUNCTION_NAME>'
-DIST = '<CLOUDFRONT_DISTRIBUTION_ID>'
-API_FUNCTION = '<API_LAMBDA_NAME>'
-HOST = '<SITE_DOMAIN>'
-AWS = ['--profile', '<AWS_PROFILE>', '--output', 'json']
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import site_config as cfg  # noqa: E402
+
+ROOT = cfg.ROOT
+NAME = cfg.GATE_FUNCTION
+DIST = cfg.DISTRIBUTION
+API_FUNCTION = cfg.API_FUNCTION
+HOST = cfg.SITE_DOMAIN
+AWS = ['--profile', cfg.PROFILE, '--output', 'json']
 
 
 def aws(*args, region='us-east-1'):
@@ -25,7 +28,8 @@ def aws(*args, region='us-east-1'):
 
 def build(key_hash):
     code = (ROOT / 'cloud/site-gate.js').read_text()
-    assert '__CLIENT_TOKEN_HASH__' in code
+    assert '__CLIENT_TOKEN_HASH__' in code and '__SITE_DOMAIN__' in code
+    code = code.replace('__SITE_DOMAIN__', HOST)
     out = ROOT / 'data/cloud-build/site-gate.js'
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(code.replace('__CLIENT_TOKEN_HASH__', key_hash))
@@ -62,7 +66,7 @@ def self_test():
     fake = 'gate-selftest-key'
     etag = upsert(build(hashlib.sha256(fake.encode()).hexdigest()))
     checks = [
-        ('cloudfront.net 주소는 301로 넘김', run_test(etag, '/', host='<CLOUDFRONT_DEFAULT_DOMAIN>'),
+        ('다른 주소(cloudfront.net 기본 주소 등)는 301로 넘김', run_test(etag, '/', host='d111111abcdef8.cloudfront.net'),
          lambda o: o['response']['statusCode'] == 301 and o['response']['headers']['location']['value'] == f'https://{HOST}/'),
         ('키 없으면 입력 화면', run_test(etag, '/'),
          lambda o: o['response']['statusCode'] == 200 and 'const bad=false' in o['response']['body']['data']),
@@ -88,7 +92,7 @@ def self_test():
 
 def publish():
     key_hash = aws('lambda', 'get-function-configuration', '--function-name', API_FUNCTION,
-                   '--query', 'Environment.Variables.CLIENT_TOKEN_HASH', region='<AWS_REGION>')
+                   '--query', 'Environment.Variables.CLIENT_TOKEN_HASH', region=cfg.REGION)
     if not isinstance(key_hash, str) or len(key_hash) != 64:
         raise SystemExit('CLIENT_TOKEN_HASH를 읽지 못함')
     etag = upsert(build(key_hash))

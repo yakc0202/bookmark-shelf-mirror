@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -16,8 +17,10 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FUNCTION = '<WORKER_LAMBDA_NAME>'
-AWS = ['--profile', '<AWS_PROFILE>', '--region', '<AWS_REGION>', '--output', 'json']
+sys.path.insert(0, str(ROOT / 'cloud'))
+import site_config as cfg  # noqa: E402
+FUNCTION = cfg.WORKER_FUNCTION
+AWS = [*cfg.AWS_ARGS, '--output', 'json']
 FILES = {'server.py': 'var/task/server.py', 'ai_runner.py': 'var/task/ai_runner.py',
          'cloud/worker_handler.py': 'var/task/worker_handler.py'}
 SINGLE = ('application/vnd.docker.distribution.manifest.v2+json', 'application/vnd.oci.image.manifest.v1+json')

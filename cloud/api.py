@@ -23,6 +23,8 @@ logger.setLevel(logging.INFO)
 S3 = boto3.client('s3', config=Config(signature_version='s3v4',s3={'addressing_style':'path'}))
 LAMBDA_CLIENT = boto3.client('lambda')
 BUCKET = os.environ['DATA_BUCKET']
+# 사진 공개 주소의 기준(사이트 도메인). 없으면 예전처럼 버킷 이름을 도메인으로 쓴다. 값은 cloud/deploy.py가 cloud/site.json에서 맞춘다.
+SITE_URL = (os.environ.get('SITE_URL') or 'https://'+BUCKET).rstrip('/')
 KEY = 'data/cards.json'
 PUBLIC_FIELDS = ('id','url','title','summary','folder','tags','thumbnail','status','source','note','created','error','transcript','place_url','attachment_url','reason','topic','ends_on')
 
@@ -124,30 +126,46 @@ def clean_schedule_item(kind,body,old,now,sched):
             item['status']=status
         return item
     if kind=='passes':
-        return {**base,'title':text('title',100,True),'total':whole('total',1,1000,10),'expires':date('expires',False),
-                'note':text('note',500)}
+        # used: 사용자 요청으로 남은 횟수에서 임의로 뺀 횟수(화면에는 입력칸 없음). 수정해도 기존 값 유지.
+        return {**base,'title':text('title',100,True),'total':whole('total',1,1000,10),'used':whole('used',0,1000,old.get('used',0) if old else 0),
+                'expires':date('expires',False),'note':text('note',500)}
     raise Problem(400,'알 수 없는 일정 종류입니다.')
 
 def norm_title(t):
     return re.sub(r'\s+','',str(t or '')).lower()
 
+def pick_pass(sched,booking):
+    """예약 날짜에 쓸 수 있는 이용권(만료일이 없거나 그날 이후)이 딱 하나면 그것, 여럿이면 수업 이름이
+    들어간 것이 딱 하나일 때만 그것. 못 고르면 ''(사용자가 직접 고른다)."""
+    usable=[p for p in sched['passes'] if not p.get('expires') or p['expires']>=booking['date']]
+    if len(usable)==1:return usable[0]['id']
+    named=[p for p in usable if norm_title(booking['title']) and norm_title(booking['title']) in norm_title(p['title'])]
+    return named[0]['id'] if len(named)==1 else ''
+
 def merge_captured_bookings(sched,found,now):
     """캡처에서 읽은 예약을 넣는다. 같은 수업·날짜·시작 시간이면 새로 넣지 않고 상태·끝 시간만 고친다.
-    확정 예약은 이름이 들어간 이용권이 딱 하나면 그 이용권에 연결한다(대기는 연결하지 않음)."""
+    이용권은 pick_pass로 연결한다. 대기도 연결해 두고(남은 횟수에는 안 셈), 확정으로 바뀌면 그때부터 센다."""
     added=updated=0
     for b in found:
         key=(norm_title(b['title']),b['date'],b['start'])
         old=next((x for x in sched['bookings'] if (norm_title(x['title']),x['date'],x['start'])==key),None)
         if old:
-            if old.get('status','booked')!=b['status'] or old['end']!=b['end']:
+            changed=old.get('status','booked')!=b['status'] or old['end']!=b['end']
+            if not old.get('pass_id'):
+                pid=pick_pass(sched,old)
+                if pid:old['pass_id']=pid;changed=True
+            if changed:
                 old.update(status=b['status'],end=b['end']);updated+=1
             continue
-        passes=[p for p in sched['passes'] if norm_title(b['title']) and norm_title(b['title']) in norm_title(p['title'])]
         sched['bookings'].append({'id':secrets.token_hex(10),'created':now,'title':b['title'],'date':b['date'],'start':b['start'],
-                                  'end':b['end'],'note':'캡처로 추가','status':b['status'],
-                                  'pass_id':passes[0]['id'] if b['status']=='booked' and len(passes)==1 else ''})
+                                  'end':b['end'],'note':'캡처로 추가','status':b['status'],'pass_id':pick_pass(sched,b)})
         added+=1
     return added,updated
+
+def requeue(item):
+    """사진·링크가 덧붙은 카드를 다시 정리 대기로. 수정 번호가 올라가 정리 중이던 워커의 옛 결과는 거절된다."""
+    item['revision']=item.get('revision',1)+1
+    if item.get('kind')!='collection':item.update(status='queued',error='',retry_at=0)
 
 def find(data, item_id):
     for item in data['items']:
@@ -155,7 +173,7 @@ def find(data, item_id):
     raise Problem(404,'북마크가 없습니다.')
 
 def photo_url(key):
-    return f'https://{BUCKET}/{key}'
+    return f'{SITE_URL}/{key}'
 
 def visible(item):
     result={k:item.get(k,'') for k in PUBLIC_FIELDS}
@@ -342,6 +360,51 @@ def change(data, path, body):
         if old:ledger[ledger.index(old)]=entry
         else:ledger.append(entry)
         return entry
+    if path=='/api/wishlist/save':
+        wish=data.setdefault('wishlist',[])
+        old=next((w for w in wish if w['id']==body.get('id')),None)
+        if body.get('id') and not old:raise Problem(404,'위시리스트 항목이 없습니다.')
+        title=str(body.get('title','')).strip()[:100]
+        if not title:raise Problem(400,'이름을 입력해 주세요.')
+        price=body.get('price',0)
+        if not isinstance(price,int) or isinstance(price,bool) or not 0<=price<=10_000_000_000:raise Problem(400,'금액을 확인해 주세요.')
+        url=str(body.get('url','')).strip()[:2000]
+        if url and not re.match(r'https?://',url):raise Problem(400,'링크는 http(s)로 시작해야 해요.')
+        bought=bool(body.get('bought',False))
+        item={'id':old['id'] if old else secrets.token_hex(10),'created':old['created'] if old else now,'title':title,'price':price,
+              'url':url,'note':str(body.get('note','')).strip()[:500],'bought':bought,
+              'item_id':str(body.get('item_id',old.get('item_id','') if old else '')).strip()[:40],
+              'thumbnail':str(body.get('thumbnail',old.get('thumbnail','') if old else '')).strip()[:2000],
+              'bought_at':(old.get('bought_at') or now) if bought and old and old.get('bought') else (now if bought else 0)}
+        if old:wish[wish.index(old)]=item
+        else:wish.append(item)
+        return item
+    if path=='/api/wishlist/add':
+        # 링크를 넣으면 바로 담는다(미리보기의 제목·썸네일). 사진은 /api/wishlist/import 에서 AI가 상품 목록을 읽는다.
+        wish=data.setdefault('wishlist',[])
+        url=body.get('_url','')
+        if not url:raise Problem(400,'링크를 넣어 주세요.')
+        same=next((w for w in wish if w.get('url')==url),None)
+        if same:return {**same,'message':'이미 위시리스트에 있어요.'}
+        title=str(body.get('_preview_title') or '').strip()[:100] or urllib.parse.urlsplit(url).hostname
+        thumb=body.get('_thumbnail') or ''
+        item={'id':secrets.token_hex(10),'created':now,'title':title,'price':0,'url':url,'note':'','bought':False,'bought_at':0,
+              'item_id':'','thumbnail':thumb if thumb.startswith('https://') else ''}
+        wish.append(item)
+        return {**item,'message':'위시리스트에 담았어요.'}
+    if path=='/api/wishlist/import':
+        # 사진(장바구니·상품 캡처 등)을 올리면 워커가 AI로 상품 목록을 읽어 위시리스트에 넣는다(운동 캡처 가져오기와 같은 방식)
+        jobs=data.setdefault('wish_jobs',[])
+        data['wish_jobs']=jobs=[j for j in jobs if j['status'] in ('queued','processing','ai_waiting') or now-j['created']<7*86400][-40:]
+        job={'id':secrets.token_hex(10),'kind':'wish-import','image_key':body['_photo_key'],'status':'queued','created':now,'revision':1,'added':0,'error':''}
+        jobs.append(job)
+        return {'id':job['id'],'message':'사진을 올렸어요. 읽는 대로 위시리스트에 넣을게요.'}
+    if path=='/api/wishlist/delete':
+        wish=data.setdefault('wishlist',[])
+        old=next((w for w in wish if w['id']==body.get('id')),None)
+        if not old:raise Problem(404,'위시리스트 항목이 없습니다.')
+        wish.remove(old)
+        return {'message':'삭제했어요.'}
     if path=='/api/ledger/delete':
         ledger=data.setdefault('ledger',[])
         old=next((e for e in ledger if e['id']==body.get('id')),None)
@@ -420,6 +483,33 @@ def change(data, path, body):
                    kind='collection',entries=[],topic=topic)
         data['items'].append(item)
         return {'id':item['id']}
+    if path=='/api/items/split':
+        # 모음·이어진 글을 개별 북마크로 나눈다. 첫 링크는 이 카드가 그대로 맡고(사진은 남김), 나머지 링크는 새 카드가 된다.
+        # 모두 다시 정리 대기로 돌려 AI가 글마다 따로 요약·분류한다.
+        item=find(data,body.get('id'))
+        if item.get('deleted'):raise Problem(404,'삭제된 카드입니다.')
+        links=[e for e in item.get('entries') or [] if e.get('kind')=='link' and e.get('url')]
+        if item.get('kind')=='collection':
+            if not links:raise Problem(400,'나눌 링크가 없습니다.')
+            first,rest=links[0],links[1:]
+            item.pop('kind')  # 링크 카드는 kind가 없다
+            item.update(url=first['url'],title=first.get('title') or item['title'],thumbnail=first.get('thumbnail') or item.get('thumbnail',''),topic='')
+        else:
+            if item.get('kind')=='photo' or not links:raise Problem(400,'나눌 링크가 없습니다.')
+            rest=links
+        item['entries']=[e for e in item.get('entries') or [] if e.get('image_key')]
+        if not item['entries']:item.pop('entries')
+        item.update(status='queued',error='',summary='',revision=item.get('revision',1)+1)
+        made=0
+        for e in rest:
+            old=next((x for x in data['items'] if x.get('url')==e['url']),None)
+            if old:
+                if old.get('deleted'):old.update(deleted=False,status='queued',revision=old.get('revision',1)+1);made+=1
+                continue
+            new=new_item({'url':e['url']})
+            new.update(title=e.get('title') or new['title'],thumbnail=e.get('thumbnail') or '',created=now)
+            data['items'].append(new);made+=1
+        return {'id':item['id'],'count':made+1,'message':f'북마크 {made+1}개로 나눴어요. 하나씩 다시 정리합니다.'}
     if path=='/api/items/to-collection':
         item=find(data,body.get('id'))
         if item.get('kind') in ('collection','photo'):raise Problem(400,'모음으로 전환할 수 없는 카드입니다.')
@@ -432,16 +522,18 @@ def change(data, path, body):
         item['revision']=item.get('revision',1)+1
         return {'id':item['id']}
     if path=='/api/items/merge-photos':
+        # 사진 카드(with)를 다른 북마크(id: 링크 또는 사진) 안으로 넣는다. 원래 사진 카드는 지운다(복원 가능).
         item=find(data,body.get('id'))
         other=find(data,body.get('with'))
         if item['id']==other['id']:raise Problem(400,'같은 카드는 합칠 수 없습니다.')
-        if item.get('kind')!='photo' or other.get('kind')!='photo':raise Problem(400,'사진 카드끼리만 합칠 수 있습니다.')
+        if other.get('kind')!='photo':raise Problem(400,'사진 카드만 다른 북마크로 넣을 수 있습니다.')
+        if item.get('kind')=='collection' or (item.get('kind')!='photo' and not item.get('url')):raise Problem(400,'링크나 사진 북마크에만 넣을 수 있습니다.')
         if item.get('deleted') or other.get('deleted'):raise Problem(404,'삭제된 카드입니다.')
         entries=item.get('entries') or ([{'image_key':item['image_key']}] if item.get('image_key') else [])
-        other_entries=other.get('entries') or ([{'image_key':other['image_key']}] if other.get('image_key') else [])
-        if len(entries)+len(other_entries)>10:raise Problem(400,'사진은 최대 10장까지 합칠 수 있습니다.')
+        other_entries=[e for e in other.get('entries') or ([{'image_key':other['image_key']}] if other.get('image_key') else []) if e.get('image_key')]
+        if sum(1 for e in entries if e.get('image_key'))+len(other_entries)>10:raise Problem(400,'사진은 최대 10장까지 합칠 수 있습니다.')
         item['entries']=entries+other_entries
-        item['revision']=item.get('revision',1)+1
+        requeue(item)
         other['deleted']=True
         other['revision']=other.get('revision',1)+1
         return {'id':item['id'],'entries':item['entries'],'message':'사진을 합쳤어요.'}
@@ -551,8 +643,8 @@ def change(data, path, body):
             item['entries']=entries
         if len(entries)>=10:raise Problem(400,'사진은 최대 10장까지 첨부할 수 있습니다.')
         entries.append({'image_key':body['_photo_key']})
-        item['revision']=item.get('revision',1)+1
-        return {'id':item['id'],'entries':entries,'message':'사진을 추가했어요.'}
+        requeue(item)
+        return {'id':item['id'],'entries':entries,'message':'사진을 추가했어요. 제목·요약을 다시 정리합니다.'}
     if path=='/api/photos':
         key=body['_photo_key'];note=body['_note']
         recent=[x for x in data['items'] if x.get('kind')=='photo' and not x.get('deleted') and now-x.get('created',0)<8]
@@ -588,10 +680,9 @@ def change(data, path, body):
                 host=urllib.parse.urlsplit(item['url']).hostname or item['url']
                 thumb,title=fetch_link_preview(item['url'])
                 entries.append({'kind':'link','url':item['url'],'title':title or host,**({'thumbnail':thumb} if thumb else {})})
-                candidate['revision']=candidate.get('revision',1)+1
                 candidate['created']=now
-                # 정리 중에 글이 붙으면 워커의 이전 결과는 거절되므로 다시 대기열로 돌려 곧바로 재처리되게 한다
-                if candidate['status']=='processing':candidate['status']='queued'
+                # 글이 붙으면 제목·요약을 다시 정리한다(정리 중이었다면 워커의 이전 결과는 수정 번호가 달라 거절됨)
+                requeue(candidate)
                 return {'id':candidate['id'],'message':'이어지는 글로 추가했어요.'}
         data['items'].append(item)
         if item['status']=='ready':return {'id':item['id'],'message':'"나중에 다시 보기"에 저장했어요.'}
@@ -605,6 +696,7 @@ def change(data, path, body):
         candidates=[x for x in data['items'] if not x.get('deleted') and pending(x)]
         candidates+=[m for m in data.get('memos',[]) if m.get('kind') in ('memo-extract','memo-summary') and pending(m)]
         candidates+=[j for j in data.get('schedule',{}).get('jobs',[]) if pending(j)]
+        candidates+=[j for j in data.get('wish_jobs',[]) if pending(j)]
         if not candidates:return {'item':None}
         item=min(candidates,key=lambda x:x['created'])
         item.update(status='processing',lease=secrets.token_urlsafe(24),lease_until=now+600)
@@ -644,6 +736,30 @@ def change(data, path, body):
                 except Problem:continue
             job['added'],job['updated']=merge_captured_bookings(sched,found,now)
             if not found:job['error']='캡처에서 예약을 찾지 못했어요.'
+        job['revision']=job.get('revision',1)+1
+        return {'message':'처리 결과를 저장했어요.'}
+    if path=='/worker/complete' and body.get('kind')=='wish-import':
+        job=next((j for j in data.get('wish_jobs',[]) if j['id']==body.get('id')),None)
+        if not job or job.get('lease')!=body.get('lease') or job.get('revision',1)!=body.get('revision'):
+            raise Problem(409,'이미 처리된 사진이라 결과를 적용하지 않았습니다.')
+        result=body.get('result',{})
+        status=result.get('status')
+        if status not in ('ready','needs_content','ai_waiting'):raise Problem(400,'잘못된 처리 상태입니다.')
+        job.pop('lease',None);job.pop('lease_until',None)
+        job['status']=status;job['error']=str(result.get('error',''))[:200]
+        job['retry_at']=now+3600 if status=='ai_waiting' else 0
+        if status=='ready':
+            wish=data.setdefault('wishlist',[])
+            have={norm_title(w['title']) for w in wish if not w.get('bought')}
+            for w in (result.get('items') or [])[:30]:
+                title=str(w.get('title','')).strip()[:100] if isinstance(w,dict) else ''
+                if not title or norm_title(title) in have:continue
+                price=w.get('price',0)
+                price=price if isinstance(price,int) and not isinstance(price,bool) and 0<=price<=10_000_000_000 else 0
+                wish.append({'id':secrets.token_hex(10),'created':now,'title':title,'price':price,'url':'','note':str(w.get('note','')).strip()[:500],
+                             'bought':False,'bought_at':0,'item_id':'','thumbnail':photo_url(job['image_key'])})
+                have.add(norm_title(title));job['added']+=1
+            if not job['added']:job['error']='사진에서 새로 담을 상품을 찾지 못했어요.'
         job['revision']=job.get('revision',1)+1
         return {'message':'처리 결과를 저장했어요.'}
     if path=='/worker/complete' and body.get('kind')=='memo-summary':
@@ -725,7 +841,7 @@ def handler(event, context):
         if method=='GET' and path.startswith('/s/'):
             data,_=read()
             return shared_page(data,path[3:])
-        allowed=('/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/schedule','/api/schedule/save','/api/schedule/delete','/api/schedule/import','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/worker/claim','/worker/complete')
+        allowed=('/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/split','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/schedule','/api/schedule/save','/api/schedule/delete','/api/schedule/import','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/api/wishlist','/api/wishlist/jobs','/api/wishlist/add','/api/wishlist/import','/api/wishlist/save','/api/wishlist/delete','/worker/claim','/worker/complete')
         if path not in allowed:raise Problem(404,'없는 주소입니다.')
         expected=os.environ['WORKER_TOKEN_HASH'] if path.startswith('/worker/') else os.environ['CLIENT_TOKEN_HASH']
         supplied=event.get('headers',{}).get('authorization','')
@@ -734,6 +850,10 @@ def handler(event, context):
         accept_encoding=event.get('headers',{}).get('accept-encoding','')
         if method=='GET' and path=='/api/memos':
             data,_=read();return response(200,sorted(data.get('memos',[]),key=lambda m:m['updated'],reverse=True),accept_encoding)
+        if method=='GET' and path=='/api/wishlist/jobs':
+            data,_=read();return response(200,data.get('wish_jobs',[])[-10:],accept_encoding)
+        if method=='GET' and path=='/api/wishlist':
+            data,_=read();return response(200,sorted(data.get('wishlist',[]),key=lambda w:w['created']),accept_encoding)
         if method=='GET' and path=='/api/ledger/plans':
             data,_=read();return response(200,sorted(data.get('ledger_plans',[]),key=lambda p:p['created']),accept_encoding)
         if method=='GET' and path=='/api/schedule':
@@ -747,17 +867,20 @@ def handler(event, context):
         if method!='POST':raise Problem(405,'지원하지 않는 요청입니다.')
         raw=event.get('body') or '{}'
         if event.get('isBase64Encoded'):raw=base64.b64decode(raw).decode()
-        if len(raw.encode())>(14_000_000 if path in ('/api/photos','/api/attach-photo','/api/memos/photo','/api/schedule/import') else 650000):raise Problem(413,'요청이 너무 큽니다.')
+        if len(raw.encode())>(14_000_000 if path in ('/api/photos','/api/attach-photo','/api/memos/photo','/api/schedule/import','/api/wishlist/import') else 650000):raise Problem(413,'요청이 너무 큽니다.')
         body=json.loads(raw)
         if not isinstance(body,dict):raise Problem(400,'JSON 객체가 필요합니다.')
-        if path in ('/api/photos','/api/attach-photo','/api/memos/photo','/api/schedule/import'):
+        if path in ('/api/photos','/api/attach-photo','/api/memos/photo','/api/schedule/import','/api/wishlist/import'):
             blob=base64.b64decode(body.get('image',''),validate=True)
             if not 0<len(blob)<=10_000_000 or not blob.startswith(b'\xff\xd8\xff') or not blob.endswith(b'\xff\xd9'):
                 raise Problem(400,'10MB 이하의 JPEG 사진이 필요합니다.')
             key='photos/'+secrets.token_hex(16)+'.jpg'
             S3.put_object(Bucket=BUCKET,Key=key,Body=blob,ContentType='image/jpeg',CacheControl='public, max-age=31536000, immutable')
-            if path=='/api/memos/photo':return response(200,{'url':photo_url(key)})
-            body={'id':body.get('id'),'_photo_key':key} if path=='/api/attach-photo' else {'_photo_key':key} if path=='/api/schedule/import' else {'_photo_key':key,'_note':str(body.get('note',''))[:20000]}
+            if path=='/api/memos/photo':return response(200,{'url':photo_url(key),'path':'/'+key})
+            body={'id':body.get('id'),'_photo_key':key} if path=='/api/attach-photo' else {'_photo_key':key} if path in ('/api/schedule/import','/api/wishlist/import') else {'_photo_key':key,'_note':str(body.get('note',''))[:20000]}
+        if path=='/api/wishlist/add':
+            body['_url']=new_item({'url':str(body.get('url',''))})['url']  # 붙여 넣은 글에서 링크만 골라 정리
+            body['_thumbnail'],body['_preview_title']=fetch_link_preview(body['_url'])
         if path=='/api/collections/entries':
             body['_thumbnail'],body['_preview_title']=fetch_link_preview(str(body.get('url','')).strip())
         try:
@@ -766,15 +889,19 @@ def handler(event, context):
             # 이미 바뀐 카드의 이전 결과는 적용하지 않되 정상 응답으로 돌려준다(워커가 오류로 멈추지 않고 다음 작업으로 넘어가게)
             if path=='/worker/complete' and e.status==409:return response(200,{'applied':False,'message':e.message})
             raise
-        if path in ('/api/items','/api/photos','/api/memos/extract','/api/memos/save','/api/memos/summarize','/api/schedule/import'):
+        if path in ('/api/items','/api/items/split','/api/items/merge-photos','/api/attach-photo','/api/photos','/api/memos/extract','/api/memos/save','/api/memos/summarize','/api/schedule/import','/api/wishlist/import'):
             try:
                 LAMBDA_CLIENT.invoke(FunctionName=os.environ.get('WORKER_FUNCTION','<WORKER_LAMBDA_NAME>'),InvocationType='Event',Payload=b'{}')
             except Exception:
                 pass
-        if path=='/worker/claim' and result.get('item',{} ) and result['item'].get('image_key'):
-            result['item']['image_download']=photo_url(result['item']['image_key'])
-            if result['item'].get('entries'):
-                result['item']['entries_download']=[photo_url(e['image_key']) for e in result['item']['entries']]
+        claimed=result.get('item') if path=='/worker/claim' else None
+        if claimed and claimed.get('kind') in (None,'photo'):  # 서랍 카드(링크·사진): 붙은 사진을 모두 AI에게
+            keys=[e['image_key'] for e in claimed.get('entries') or [] if e.get('image_key')] or ([claimed['image_key']] if claimed.get('image_key') else [])
+            if keys:
+                claimed['image_download']=photo_url(keys[0])
+                claimed['entries_download']=[photo_url(k) for k in keys]
+        elif claimed and claimed.get('image_key'):
+            claimed['image_download']=photo_url(claimed['image_key'])
         return response(200,result)
     except Problem as e:return response(e.status,{'error':e.message})
     except (ValueError,TypeError,KeyError) as e:

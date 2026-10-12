@@ -21,6 +21,7 @@ class MemoPhoto(unittest.TestCase):
   self.assertEqual(len(self.puts),1);key=self.puts[0]['Key']
   self.assertTrue(key.startswith('photos/') and key.endswith('.jpg'))
   self.assertEqual(url,'https://test/'+key)
+  self.assertEqual(json.loads(out['body'])['path'],'/'+key)
   self.assertEqual(self.transacts,[])
  def test_rejects_non_jpeg(self):
   self.assertEqual(self.call(b'not a jpeg')['statusCode'],400)
