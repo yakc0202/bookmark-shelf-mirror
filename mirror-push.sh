@@ -25,7 +25,8 @@ src, mirror, redact = map(Path, sys.argv[1:])
 # 공개하지 않는 파일: API 주소가 박힌 단축어(바이너리라 가릴 수 없음). REQUESTS.md 등 문서는 값을 가린 채로 올린다.
 EXCLUDE = {'shortcuts/Save-to-Shelf-Cloud.shortcut', 'shortcuts/save-to-shelf-cloud-unsigned.shortcut',
            'docs/서랍-구성-안내.md',  # 인프라 구성 안내는 비공개 저장소에만(사용자 지시, 2026-10-10)
-           'mirror-redact.txt'}  # 가릴 실제 값 목록 자체는 절대 공개하지 않음
+           'mirror-redact.txt',  # 가릴 실제 값 목록 자체는 절대 공개하지 않음
+           'SYNC.md'}  # 에이전트용 현재 상태 요약(운영 내용)은 비공개 저장소에만
 pairs = []
 for line in redact.read_text().splitlines():
     if line.strip() and not line.lstrip().startswith('#') and '=>' in line:
