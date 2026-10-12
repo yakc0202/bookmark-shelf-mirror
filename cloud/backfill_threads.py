@@ -11,8 +11,10 @@ import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-BUCKET, KEY = '<SITE_DOMAIN>', 'data/cards.json'
-AWS = ['--profile', '<AWS_PROFILE>', '--region', '<AWS_REGION>']
+sys.path.insert(0, str(ROOT / 'cloud'))
+import site_config as cfg  # noqa: E402
+BUCKET, KEY = cfg.BUCKET, 'data/cards.json'
+AWS = cfg.AWS_ARGS
 
 sys.modules.setdefault('boto3', types.SimpleNamespace(client=lambda *a, **kw: None))
 sys.modules.setdefault('botocore', types.ModuleType('botocore'))

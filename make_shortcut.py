@@ -15,7 +15,8 @@ DEST = Path(__file__).parent / 'shortcuts'
 # --v11: 예전처럼 저장 완료 알림만 → shortcuts/Save-to-Shelf-v11.shortcut (롤백용 보관본)
 import sys
 OPEN_CHOICE = '--v11' not in sys.argv
-SITE = 'https://<SITE_DOMAIN>'
+sys.path.insert(0, str(Path(__file__).parent / 'cloud'))
+from site_config import SITE_URL as SITE  # cloud/site.json 의 site_domain
 DEST.mkdir(exist_ok=True)
 
 def action(identifier, **parameters):

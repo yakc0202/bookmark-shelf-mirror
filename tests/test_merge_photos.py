@@ -42,4 +42,17 @@ class MergePhotos(unittest.TestCase):
   self.photo_item('b',entries=[{'image_key':f'photos/{i}.jpg'} for i in range(6)])
   with self.assertRaises(api.Problem):
    api.change(self.data,'/api/items/merge-photos',{'id':'a','with':'b'})
+ def link_item(self,id,**extra):
+  item=dict(id=id,url='https://x.test/'+id,title='링크 '+id,summary='',folder='f',tags='[]',thumbnail='',
+   status='ready',source='',note='',created=1,error='',revision=1,deleted=False)
+  item.update(extra);self.data['items'].append(item);return item
+ def test_photo_goes_under_link(self):
+  self.link_item('l',entries=[{'kind':'link','url':'https://y.test','title':'y'}]);self.photo_item('b')
+  out=api.change(self.data,'/api/items/merge-photos',{'id':'l','with':'b'})
+  self.assertEqual(out['entries'],[{'kind':'link','url':'https://y.test','title':'y'},{'image_key':'photos/b.jpg'}])
+  self.assertTrue(next(x for x in self.data['items'] if x['id']=='b')['deleted'])
+ def test_link_cannot_go_into_photo_and_collection_cannot_receive(self):
+  self.link_item('l');self.photo_item('b');self.link_item('c',kind='collection',url='')
+  with self.assertRaises(api.Problem):api.change(self.data,'/api/items/merge-photos',{'id':'b','with':'l'})
+  with self.assertRaises(api.Problem):api.change(self.data,'/api/items/merge-photos',{'id':'c','with':'b'})
 if __name__=='__main__':unittest.main()

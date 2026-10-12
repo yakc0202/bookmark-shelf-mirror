@@ -1,0 +1,10 @@
+{
+  "site_domain": "<SITE_DOMAIN>",
+  "bucket": "<SITE_DOMAIN>",
+  "aws_profile": "<AWS_PROFILE>",
+  "region": "<AWS_REGION>",
+  "cloudfront_distribution": "<CLOUDFRONT_DISTRIBUTION_ID>",
+  "api_function": "<API_LAMBDA_NAME>",
+  "worker_function": "<WORKER_LAMBDA_NAME>",
+  "gate_function": "<GATE_FUNCTION_NAME>"
+}

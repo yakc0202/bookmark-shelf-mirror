@@ -1,4 +1,4 @@
-"""Upload snapshot and web assets using only the explicitly authorized bookmark profile."""
+"""Upload snapshot and web assets using only the explicitly authorized <AWS_PROFILE> profile."""
 import json,sqlite3,subprocess,os
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
