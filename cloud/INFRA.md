@@ -66,10 +66,14 @@ Lambda 컨테이너로도 옮겼습니다. 맥을 안 켜놔도 자동 정리되
   (Python 3.13 베이스 + Node 22 직접 설치 + `@openai/codex`/`@anthropic-ai/claude-code` npm 설치)
 - 핸들러: `cloud/worker_handler.py` — `cloud/worker.py`와 같은 claim→organize/extract→complete
   로직이지만 무한 루프 대신 호출당 최대 20건 처리 후 종료(Lambda는 호출 단위로 과금/제한됨)
-- IAM Role: `<WORKER_ROLE_NAME>` — `secretsmanager:GetSecretValue`(아래 시크릿만) +
-  `AWSLambdaBasicExecutionRole`만 가짐. S3 권한은 없음(HTTP API를 통해서만 데이터에 접근)
-- 자격증명: Secrets Manager `<WORKER_SECRET_NAME>`에 `{codex_auth, claude_token}` JSON으로
-  저장. Lambda 콜드스타트 시 `/tmp/.codex/auth.json`에 쓰고 `CLAUDE_CODE_OAUTH_TOKEN` 환경변수로
+- IAM Role: `<WORKER_ROLE_NAME>` — 인라인 `ssm-auth-read`(아래 SSM 파라미터 2개만
+  `ssm:GetParameters`) + `AWSLambdaBasicExecutionRole`만 가짐. S3 권한은 없음(HTTP API를 통해서만 데이터에 접근)
+- 자격증명: SSM Parameter Store SecureString 2개 — `/<WORKER_SECRET_NAME>/codex-auth`(Codex
+  `auth.json`, 약 4KB)와 `/<WORKER_SECRET_NAME>/claude-token`. 합치면 Standard 한도 4KB를 넘어서
+  나눔(둘 다 Standard = 무료, 기본 키 `aws/ssm`). worker 환경변수 `AUTH_PARAM_PREFIX=/<WORKER_SECRET_NAME>/`.
+  2026-10-09까지는 Secrets Manager `<WORKER_SECRET_NAME>`(월 $0.40)에 있었고, 옮긴 뒤 삭제
+  예약(10-16 완전 삭제). 코드는 `AUTH_PARAM_PREFIX`가 없으면 `AUTH_SECRET_ARN`(옛 방식)을 읽음.
+  Lambda 콜드스타트 시 `/tmp/.codex/auth.json`에 쓰고 `CLAUDE_CODE_OAUTH_TOKEN` 환경변수로
   주입(Lambda는 `/tmp` 외 쓰기 불가이므로 `SHELF_DATA_DIR=/tmp/data`로 `server.py`의 데이터 경로도 바꿈).
   Codex는 전용 두 번째 ChatGPT 계정(`~/.codex2`) 세션을 복사한 것, Claude는 개인 계정의
   `claude setup-token` 헤드리스 토큰.
@@ -82,15 +86,16 @@ Lambda 컨테이너로도 옮겼습니다. 맥을 안 켜놔도 자동 정리되
   실패나 워커 크래시로 못 간 작업을 주워가게 하는 용도. 메인 트리거는 위 invoke이고
   이건 어디까지나 보험(비용은 거의 $0 — 프리티어 안에서 다 소화됨).
 - 자격증명 재발급 시: 새 토큰/auth.json 준비 후
-  `aws secretsmanager put-secret-value --secret-id <WORKER_SECRET_NAME> --secret-string file://...`
-  로 교체. Lambda 재배포는 필요 없음(다음 콜드스타트부터 자동 반영).
+  `python3 cloud/worker_auth.py set --codex ~/.codex2/auth.json --claude-token-file <토큰 파일>`
+  로 교체(값은 출력하지 않음, `status`로 버전 확인). `<IAM_USER>` 사용자에 `ssm:PutParameter` 권한 필요
+  (`data/iam/bookmark-shelf-ops.json`의 `WorkerAuth`). Lambda 재배포는 필요 없음(다음 콜드스타트부터 자동 반영).
 - 로컬 맥 워커(`cloud/worker.py`)는 당장은 그대로 같이 둠(둘 다 같은 claim/lease를 쓰니
   동시에 돌아도 안전, 중복 처리는 안 됨). 완전히 끌지는 사용자 판단에 맡김.
 
 ## `<IAM_USER>` IAM 사용자 권한 (2026-10-03 최소 권한으로 정리)
 
 권한은 위 9개 리소스(2 Lambda, 1 S3 버킷, 1 CloudFront
-배포, 1 ECR 리포, 1 Secret, 1 EventBridge 규칙, 2 로그 그룹)에만 정확히 맞춘
+배포, 1 ECR 리포, 1 Secret(2026-10-09 SSM 파라미터로 대체), 1 EventBridge 규칙, 2 로그 그룹)에만 정확히 맞춘
 고객관리형 정책 하나(`<IAM_POLICY_NAME>`, IAM 콘솔에서 ARN
 `arn:aws:iam::<account-id>:policy/<IAM_POLICY_NAME>`로 확인 가능)로
 정리했습니다. 인라인 정책 용량 한도(2048바이트)를 넘어서 managed policy로 만듦.
@@ -160,6 +165,23 @@ CloudFormation을 거치지 않습니다.
 
 - `server.py`·`ai_runner.py`·`cloud/worker_handler.py`만 바뀐 경우: `python3 cloud/deploy_worker.py`. 지금 worker Lambda가 쓰는 이미지 위에 이 세 파일만 담은 층을 얹은 새 이미지를 `aws ecr` API(batch-get-image, 레이어 업로드, put-image)로 올리고 Lambda를 그 이미지로 바꾼다. 태그 `patch-YYYYMMDD-HHMMSS`와 `latest`를 함께 붙임.
 - 스크립트가 처음에 출력하는 "현재(되돌릴 때 쓸) 이미지" 주소로 `aws lambda update-function-code --image-uri <주소>`를 하면 되돌릴 수 있음.
-- Python 패키지·Node·Codex/Claude CLI 버전을 바꾸는 등 `cloud/Dockerfile.worker` 자체가 바뀌면 Docker로 전체 재빌드가 필요(이 맥에는 2026-10-07 기준 Docker 없음).
+- Python 패키지·Node·Codex/Claude CLI 버전을 바꾸는 등 `cloud/Dockerfile.worker` 자체가 바뀌면 Docker로 전체 재빌드가 필요. 다른 맥에는 Docker가 없고, MacBook Air에는 Colima+Docker가 있으므로 그 맥에서 빌드한다(평소엔 꺼 두고 빌드할 때만 `colima start`, 끝나면 `colima stop` — `AGENTS.md` 참고). 2026-10-09에 VM을 통째로 지웠으므로 다음 빌드 때 처음 켜는 명령은 `AGENTS.md`에 있다).
 - 배포 뒤 확인: `aws lambda invoke --function-name <worker> --invocation-type RequestResponse`로 한 번 실행해 오류 없이 `{"processed": N}`이 나오는지 본다.
 - 첫 사용(2026-10-07): 모음 주제 추론 반영. 이전 이미지 `sha256:6289f55a…`, 새 이미지 `sha256:9e19700b…`(태그 `patch-20261007-145550`).
+
+## 사이트 설정 한 곳으로 모음 (2026-10-09)
+
+- 도메인·버킷·프로필·리전·리소스 이름은 `cloud/site.json`에만 둔다. 스크립트는 `cloud/site_config.py`로 읽는다. 테스트 `tests/test_site_config.py`가 코드에 도메인이 다시 박히면 실패한다.
+- api Lambda 환경변수 `SITE_URL`(사진 공개 주소의 기준)을 추가했다. 값은 `python3 cloud/deploy.py`가 `site.json`에 맞춰 넣는다(현재 `https://<SITE_DOMAIN>`). 없으면 예전처럼 `https://{버킷이름}`.
+- `cloud/site-gate.js`의 `HOST`는 자리표시 `__SITE_DOMAIN__`이며 `deploy_gate.py`가 채운다. 2026-10-09 변경 뒤 사이트 잠금 함수는 다시 발행하지 않았다(만든 결과가 현재 발행본과 같음, 권한도 없음).
+- 웹 화면(`index.html`)에는 도메인이 없다. 메모에 넣는 사진은 상대 주소(`/photos/…`)로 넣고, 기존 메모 1개의 사진 3장도 `cloud/relink_memo_photos.py --apply`로 상대 주소로 바꿨다(이전 데이터 버전 `O0h05eZI35jKFMHByBlc6FCGRCCXfIGF`, 이전 `index.html` 버전 `quuSx3I6MkMw7WVY3elRqRvJZsnhKDcM`).
+- 도메인 `<SITE_ROOT_DOMAIN>` 등록 만료 2026-11-24. 이관 절차·필요 권한·도메인이 남은 곳 목록: `docs/DOMAIN_MIGRATION.md`.
+- 영구로 붙일 추가 권한 정책 `bookmark-shelf-ops`(비용·지표·로그 읽기, ECR 정리, Function URL CORS, 사이트 잠금 함수, ACM, 자기 정책 읽기): 실제 값 `data/iam/bookmark-shelf-ops.json`(커밋 안 됨), 설명은 `docs/DOMAIN_MIGRATION.md` 2장. 2026-10-09 기준 아직 붙이지 않음(콘솔에서 계정 소유자가 해야 함).
+
+## 공유 링크 주소 (2026-10-10)
+
+- 공유 링크는 `https://<CLOUDFRONT_DEFAULT_DOMAIN>/s/<토큰>`(CloudFront 기본 주소). 도메인을 바꿔도 그대로다.
+- CloudFront에 원본 `api-origin`(api Function URL)과 동작 `s/*`를 추가: 사이트 잠금 함수 없음, 캐시 안 함(관리형 CachingDisabled), Host는 Function URL 것으로(관리형 AllViewerExceptHostHeader).
+- 화면은 S3 `config.js`의 `window.SHELF_SHARE_BASE`로 공유 주소를 만든다(없으면 예전처럼 api 주소).
+- 다시 만들거나 확인: `python3 cloud/deploy_share_route.py`(이미 있으면 아무것도 안 바꿈).
+- 예전에 보낸 Function URL 주소 링크(`…lambda-url…/s/<토큰>`)도 계속 열린다. 사이트 주소(`<SITE_DOMAIN>/s/…`)로도 열린다.

@@ -1,6 +1,8 @@
 import json,urllib.request,urllib.error
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
+import sys;sys.path.insert(0,str(ROOT/'cloud'))
+import site_config as cfg
 o=json.loads((ROOT/'data/cloud-build/outputs.json').read_text())
 token=(ROOT/'data/token').read_text().strip()
 def call(path,body=None,auth=True):
@@ -20,9 +22,9 @@ try:
  assert len(call('/api/items'))==len(rows)-1
 finally:call('/api/restore',{'id':first['id']})
 assert call('/api/items')==rows
-req=urllib.request.Request(o['ApiURL']+'/api/items',method='OPTIONS',headers={'Origin':'http://<SITE_DOMAIN>','Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,content-type'})
-with urllib.request.urlopen(req) as r:assert r.headers['Access-Control-Allow-Origin']=='http://<SITE_DOMAIN>'
+req=urllib.request.Request(o['ApiURL']+'/api/items',method='OPTIONS',headers={'Origin':cfg.SITE_URL,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization,content-type'})
+with urllib.request.urlopen(req) as r:assert r.headers['Access-Control-Allow-Origin']==cfg.SITE_URL
 with urllib.request.urlopen(o['WebsiteURL']) as r:assert r.status==200
-try:urllib.request.urlopen('https://s3.<AWS_REGION>.amazonaws.com/<SITE_DOMAIN>/data/cards.json');raise AssertionError('public data')
+try:urllib.request.urlopen(f'https://s3.{cfg.REGION}.amazonaws.com/{cfg.BUCKET}/data/cards.json');raise AssertionError('public data')
 except urllib.error.HTTPError as e:assert e.code==403
 print('PASS: 16 cards preserved, auth, duplicate, delete/restore, CORS, website, private JSON')

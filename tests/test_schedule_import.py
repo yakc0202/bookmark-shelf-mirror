@@ -22,7 +22,7 @@ class ScheduleImport(unittest.TestCase):
   self.assertEqual((job['kind'], job['image_key']), ('schedule-import', 'photos/a.jpg'))
   complete(self.data, job, {'status': 'ready', 'bookings': [booking('발레'), booking('발레', start='20:00', end='21:00', status='waiting'), booking('요가', start='25:00')]})
   b = self.data['schedule']['bookings']
-  self.assertEqual([(x['start'], x['status'], x['pass_id']) for x in b], [('19:00', 'booked', self.ballet['id']), ('20:00', 'waiting', '')])
+  self.assertEqual([(x['start'], x['status'], x['pass_id']) for x in b], [('19:00', 'booked', self.ballet['id']), ('20:00', 'waiting', self.ballet['id'])])
   j = self.data['schedule']['jobs'][0]
   self.assertEqual((j['status'], j['added'], j['updated']), ('ready', 2, 0))
  def test_same_class_from_second_capture_updates_status(self):
@@ -31,6 +31,23 @@ class ScheduleImport(unittest.TestCase):
   b = self.data['schedule']['bookings']
   self.assertEqual(len(b), 1); self.assertEqual(b[0]['status'], 'booked')
   self.assertEqual(self.data['schedule']['jobs'][1]['updated'], 1)
+ def test_single_usable_pass_links_without_name_match(self):
+  # 수업 이름("레벨0")이 이용권 이름("주 2회 1개월")에 없어도, 그날 쓸 수 있는 이용권이 하나면 연결
+  api.change(self.data, '/api/schedule/delete', {'kind': 'passes', 'id': self.ballet['id']})
+  month = api.change(self.data, '/api/schedule/save', {'kind': 'passes', 'title': '주 2회 1개월', 'total': 8, 'expires': '2026-10-31'})
+  api.change(self.data, '/api/schedule/save', {'kind': 'passes', 'title': '지난달', 'total': 8, 'expires': '2026-09-30'})
+  complete(self.data, self.upload(), {'status': 'ready', 'bookings': [booking('레벨0'), booking('레벨0', date='2026-11-02')]})
+  b = self.data['schedule']['bookings']
+  self.assertEqual([x['pass_id'] for x in b], [month['id'], ''])  # 11월은 쓸 수 있는 이용권 없음
+ def test_ambiguous_passes_stay_unlinked(self):
+  api.change(self.data, '/api/schedule/save', {'kind': 'passes', 'title': '요가 5회', 'total': 5, 'expires': ''})
+  complete(self.data, self.upload(), {'status': 'ready', 'bookings': [booking('필라테스')]})
+  self.assertEqual(self.data['schedule']['bookings'][0]['pass_id'], '')
+ def test_recapture_links_unlinked_booking(self):
+  api.change(self.data, '/api/schedule/save', {'kind': 'bookings', 'title': '발레', 'date': '2026-10-09', 'start': '19:00', 'end': '19:50', 'pass_id': ''})
+  complete(self.data, self.upload(), {'status': 'ready', 'bookings': [booking('발레')]})
+  b = self.data['schedule']['bookings']
+  self.assertEqual((len(b), b[0]['pass_id']), (1, self.ballet['id']))
  def test_stale_or_busy(self):
   job = self.upload()
   with self.assertRaises(api.Problem): complete(self.data, {**job, 'lease': 'x'}, {'status': 'ready', 'bookings': []})

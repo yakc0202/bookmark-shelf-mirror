@@ -36,10 +36,10 @@ flowchart LR
 | 서비스 도메인 | 최종 접속 도메인(DNS CNAME 대상, CloudFront 배포 도메인으로 연결) | DNS 설정, `data/cloud-build/outputs.json` |
 | CloudFormation 스택 이름 | 자유롭게 지정 | 배포 명령 인자 |
 | 소유자 접속 키 | 앱 로그인용 비밀 키 | `data/token` (버전 관리 제외) |
-| 워커 접속 키 | 로컬 워커(현재 중지, 검증용으로만 사용) 전용 키. Lambda 워커는 별도로 Secrets Manager에 자격증명 보관(`cloud/INFRA.md` 참고) | `data/cloud-worker-token`, `data/cloud-worker.json` (버전 관리 제외) |
+| 워커 접속 키 | 로컬 워커(현재 중지, 검증용으로만 사용) 전용 키. Lambda 워커는 별도로 SSM Parameter Store에 자격증명 보관(`cloud/worker_auth.py`)(`cloud/INFRA.md` 참고) | `data/cloud-worker-token`, `data/cloud-worker.json` (버전 관리 제외) |
 
-`cloud/deploy.py`·`cloud/verify.py`에는 현재 운영 중인 버킷명/도메인이 예시로 박혀 있을 수 있습니다.
-다른 계정에 새로 배포한다면 이 값들을 자신의 버킷명으로 바꿔서 사용하세요.
+사이트 도메인·버킷명·AWS 프로필·리전·리소스 이름은 `cloud/site.json` 한 곳에 있고, 배포·운영 스크립트는 `cloud/site_config.py`로 이 값을 읽습니다.
+다른 계정에 새로 배포하거나 도메인을 바꿀 때는 이 파일만 고치세요(도메인 이관 순서: `docs/DOMAIN_MIGRATION.md`). 시스템 전체 설명서: `docs/guide.html`.
 
 버킷 정책은 `index.html`/`config.js`/단축어 다운로드 파일만 익명 공개로 허용하고, `data/cards.json`과 `photos/*`는 비공개로 유지합니다.
 DNS는 서비스 도메인을 CloudFront 배포 도메인으로 CNAME 연결합니다. CloudFront origin은 S3 웹사이트 엔드포인트(http-only, 버킷명에 점이 있어 REST 엔드포인트+HTTPS는 인증서 불일치로 동작 안 함)이며, 뷰어 쪽은 ACM 인증서로 HTTPS를 제공합니다. API/공유 링크는 별도로 Lambda Function URL의 HTTPS를 그대로 씁니다. 자세한 내용과 과거 장애 이력은 `cloud/INFRA.md` 참고.
