@@ -161,6 +161,7 @@ CloudFormation을 거치지 않습니다.
 - 사이트 잠금 이후 `index.html`, `config.js`는 키 쿠키가 있어야 열림. 위 공개 파일 중 아이콘 3종·단축어만 키 없이 열림.
 - `photos/*`는 버킷 정책이 아니라 CloudFront OAC로만 공개 → 새 공개 이미지가 필요하면 `photos/` 아래에 올리면 권한 없이 됨.
 - 탭 파비콘: `photos/site-favicon-v1.png`(투명 배경 128px). `photos/`는 1년 불변 캐시라 아이콘을 바꿀 땐 같은 이름에 덮어쓰지 말고 `v2`처럼 새 이름으로 올린 뒤 `index.html`과 `cloud/site-gate.js`의 링크를 함께 바꿀 것.
+- 홈 화면 앱 설정(manifest): `photos/app-manifest-v1.webmanifest`(원본 `static/app-manifest.webmanifest`). 기본 경로에 두면 잠금 함수·버킷 정책 때문에 키 없이 못 읽어서 `photos/`에 둠. 바꿀 땐 새 이름(`v2`)으로 올리고 `index.html` 링크를 함께 바꿀 것.
 - 홈 화면·즐겨찾기 아이콘: `apple-touch-icon.png`(180px, 미색 배경 — iOS가 투명 배경을 검게 칠하므로 배경 유지).
 
 ## worker 코드 배포 (Docker 없이, 2026-10-07)
