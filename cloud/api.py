@@ -198,19 +198,44 @@ def shared_page(data, token):
     item = visible(item)
     e = lambda value: html.escape(str(value or ''), quote=True)
     url = item.get('url', '')
-    if urllib.parse.urlsplit(url).scheme not in ('http','https'):
+    safe = lambda u: urllib.parse.urlsplit(str(u or '')).scheme in ('http','https')
+    is_collection = item.get('kind') == 'collection'
+    if not is_collection and not safe(url):
         raise Problem(404, '원본 주소가 올바르지 않습니다.')
     thumb = item.get('thumbnail', '')
     cover = '<img src="'+e(thumb)+'" alt="" referrerpolicy="no-referrer">' if thumb.startswith('https://') else ''
+    # 모음(또는 링크·사진이 덧붙은 카드)은 담긴 항목 전체를 목록으로 보여 준다. 링크는 http(s)만.
+    rows = []
+    for x in item.get('entries') or []:
+        if x.get('kind') == 'link' and safe(x.get('url')):
+            host = urllib.parse.urlsplit(x['url']).hostname or ''
+            img = '<img class="th" src="'+e(x['thumbnail'])+'" alt="" referrerpolicy="no-referrer">' if str(x.get('thumbnail','')).startswith('https://') else ''
+            rows.append('<li><a href="'+e(x['url'])+'" target="_blank" rel="noreferrer noopener">'+img+'<span><b>'+e(x.get('title') or host)+'</b><small>'+e(host)+'</small></span></a></li>')
+        elif 'thumbnail' in x and str(x['thumbnail']).startswith('https://'):
+            rows.append('<li class="ph"><img src="'+e(x['thumbnail'])+'" alt="" referrerpolicy="no-referrer"></li>')
+    listing = ('<ul>'+''.join(rows)+'</ul>') if rows else ''
+    if is_collection:
+        cover = ''
+        title = item.get('topic') or item['title']
+        badge = '공유받은 모음 · 항목 '+str(len(rows))+'개'
+        link = ''
+    else:
+        title = item['title']
+        badge = '공유받은 북마크 · '+e(item['folder'])
+        link = '<a href="'+e(url)+'" target="_blank" rel="noreferrer noopener">원본 보기 ↗</a>'
+    summary = item.get('summary') or ('' if is_collection else '아직 요약이 없습니다. 원본에서 내용을 확인하세요.')
     page = ('<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<meta name="robots" content="noindex,nofollow"><title>'+e(item['title'])+' · 서랍</title>'
+            '<meta name="robots" content="noindex,nofollow"><title>'+e(title)+' · 서랍</title>'
             '<style>body{margin:0;padding:24px;background:#f7f7f2;color:#232b28;font:16px -apple-system,sans-serif}'
             'article{max-width:560px;margin:24px auto;background:white;border:1px solid #dbe0d7;border-radius:20px;overflow:hidden}'
             'img{width:100%;max-height:300px;object-fit:cover}.body{padding:24px}h1{font-size:24px;line-height:1.4}'
-            'p{line-height:1.7;white-space:pre-wrap}a{color:#314f3a}.badge{color:#65735f;font-size:14px}</style>'
-            '<article>'+cover+'<div class="body"><span class="badge">공유받은 북마크 · '+e(item['folder'])+'</span>'
-            '<h1>'+e(item['title'])+'</h1><p>'+e(item.get('summary') or '아직 요약이 없습니다. 원본에서 내용을 확인하세요.')+'</p>'
-            '<a href="'+e(url)+'" target="_blank" rel="noreferrer noopener">원본 보기 ↗</a></div></article></html>')
+            'p{line-height:1.7;white-space:pre-wrap}a{color:#314f3a}.badge{color:#65735f;font-size:14px}'
+            'ul{list-style:none;margin:16px 0;padding:0;display:flex;flex-direction:column;gap:10px}'
+            'li a{display:flex;gap:12px;align-items:center;text-decoration:none;color:inherit;border:1px solid #dbe0d7;border-radius:12px;padding:10px}'
+            'li .th{width:64px;height:64px;flex:none;object-fit:cover;border-radius:8px;max-height:none}li span{display:flex;flex-direction:column;gap:2px;min-width:0}'
+            'li b{font-weight:600;overflow-wrap:anywhere}li small{color:#7a847b}li.ph img{border-radius:12px;max-height:none}</style>'
+            '<article>'+cover+'<div class="body"><span class="badge">'+badge+'</span>'
+            '<h1>'+e(title)+'</h1>'+('<p>'+e(summary)+'</p>' if summary else '')+listing+link+'</div></article></html>')
     return {'statusCode':200, 'headers':{'content-type':'text/html; charset=utf-8','cache-control':'no-store',
         'referrer-policy':'no-referrer','x-content-type-options':'nosniff','x-robots-tag':'noindex, nofollow',
         'content-security-policy':"default-src 'none'; img-src https:; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"}, 'body':page}
@@ -786,10 +811,10 @@ def change(data, path, body):
             return {'message':'공유를 종료했어요.'}
         existing=next((v for v in shares.values() if v['item_id']==item['id'] and 'token' in v),None)
         if existing:
-            return {'token':existing['token'],'message':'이 링크를 가진 사람은 이 북마크를 볼 수 있어요.'}
+            return {'token':existing['token'],'message':'이 링크를 가진 사람은 이 '+('모음을' if item.get('kind')=='collection' else '북마크를')+' 볼 수 있어요.'}
         token=secrets.token_urlsafe(32)
         shares[hashlib.sha256(token.encode()).hexdigest()]={'item_id':item['id'],'created':now,'token':token}
-        return {'token':token,'message':'이 링크를 가진 사람은 이 북마크를 볼 수 있어요.'}
+        return {'token':token,'message':'이 링크를 가진 사람은 이 '+('모음을' if item.get('kind')=='collection' else '북마크를')+' 볼 수 있어요.'}
     if path=='/worker/complete':
         if item.get('deleted') or item.get('lease')!=body.get('lease') or item.get('revision',1)!=body.get('revision'):
             raise Problem(409,'삭제 또는 수정된 카드라 이전 처리 결과를 적용하지 않았습니다.')
