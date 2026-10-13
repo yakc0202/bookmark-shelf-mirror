@@ -1,13 +1,14 @@
 <!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>서랍 — 나중에 다시 보고 싶은 것들</title>
 <link rel="icon" type="image/png" href="/photos/site-favicon-v1.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3">
-<!-- 홈 화면 앱: 앱처럼(주소창 없이) 열기. manifest는 잠금 함수·버킷 정책을 안 거치는 photos/ 에 올린다(파일 static/app-manifest.webmanifest, 바꾸면 v 숫자 올려 새 이름으로) -->
-<link rel="manifest" href="/photos/app-manifest-v1.webmanifest">
+<!-- 홈 화면 앱: 앱처럼(주소창 없이) 열기. manifest는 휴대폰·태블릿에서만 붙인다(맥 크롬 등에 "앱 설치"가 뜨지 않게, 아래 스크립트).
+     잠금 함수·버킷 정책을 안 거치는 photos/ 에 올린다(파일 static/app-manifest.webmanifest, 바꾸면 v 숫자 올려 새 이름으로) -->
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="서랍"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="theme-color" content="#fbfaf6">
 <script>
 const UI_THEME='notebook'; /* 노트 스타일 끄기(되돌리기): '' 로 바꾸고 배포 */
 if(UI_THEME==='notebook')document.documentElement.classList.add('nb');
+if(/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)||(/Macintosh/.test(navigator.userAgent)&&navigator.maxTouchPoints>1)){const l=document.createElement('link');l.rel='manifest';l.href='/photos/app-manifest-v1.webmanifest';document.head.append(l)}
 if('scrollRestoration' in history)history.scrollRestoration='manual';
 window.scrollTo(0,0);
 if(/iPhone|iPod|Android.*Mobile/i.test(navigator.userAgent)){
