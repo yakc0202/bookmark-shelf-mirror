@@ -28,4 +28,11 @@ class Sharing(unittest.TestCase):
  def test_unknown_token(self):
   for token in ('','../data/cards.json','a'*43):
    with self.assertRaises(api.Problem):api.shared_page(self.data,token)
+ def test_collection_shares_all_entries(self):
+  self.data['items'].append({'id':'col','kind':'collection','url':'','title':'여행 모음','topic':'오사카 여행','folder':'여행','summary':'가볼 곳','note':'PRIVATE NOTE','status':'ready','created':2,
+   'entries':[{'kind':'link','url':'https://a.example/x','title':'<b>맛집</b>','thumbnail':'https://img.example/a.jpg'},{'kind':'link','url':'javascript:alert(1)','title':'나쁜 링크'},{'image_key':'photos/p.jpg'}]})
+  out=api.change(self.data,'/api/share',{'id':'col'});self.assertIn('모음을',out['message'])
+  page=api.shared_page(self.data,out['token'])['body']
+  for want in ('오사카 여행','공유받은 모음 · 항목 2개','https://a.example/x','&lt;b&gt;맛집&lt;/b&gt;','a.example','/photos/p.jpg','가볼 곳'):self.assertIn(want,page)
+  for bad in ('javascript:','나쁜 링크','PRIVATE NOTE','원본 보기'):self.assertNotIn(bad,page)
 if __name__=='__main__':unittest.main()

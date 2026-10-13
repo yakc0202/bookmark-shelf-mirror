@@ -1,0 +1,15 @@
+{
+  "name": "서랍",
+  "short_name": "서랍",
+  "description": "나중에 다시 보고 싶은 것들 — 북마크·메모·일정·가계부",
+  "lang": "ko",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fbfaf6",
+  "theme_color": "#fbfaf6",
+  "icons": [
+    {"src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any"},
+    {"src": "/photos/site-favicon-v1.png", "sizes": "128x128", "type": "image/png", "purpose": "any"}
+  ]
+}
