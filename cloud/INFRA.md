@@ -75,8 +75,8 @@ Lambda 컨테이너로도 옮겼습니다. 맥을 안 켜놔도 자동 정리되
   예약(10-16 완전 삭제). 코드는 `AUTH_PARAM_PREFIX`가 없으면 `AUTH_SECRET_ARN`(옛 방식)을 읽음.
   Lambda 콜드스타트 시 `/tmp/.codex/auth.json`에 쓰고 `CLAUDE_CODE_OAUTH_TOKEN` 환경변수로
   주입(Lambda는 `/tmp` 외 쓰기 불가이므로 `SHELF_DATA_DIR=/tmp/data`로 `server.py`의 데이터 경로도 바꿈).
-  Codex는 전용 두 번째 ChatGPT 계정(`~/.codex2`) 세션을 복사한 것, Claude는 개인 계정의
-  `claude setup-token` 헤드리스 토큰.
+  순서: Codex 계정 1(`codex-auth`) → Codex 계정 2(`codex-auth-2`) → Claude 계정 1(`claude-token`) → Claude 계정 2(`claude-token-2`).
+  계정 2 값이 SSM에 없으면 그 계정은 건너뛴다. 실패하면 바로 다음 계정으로 넘기고 그 계정은 쉰다: 로그인 실패 하루, 한도·연결 오류 1시간. 로그인 실패로 쉬는 중이어도 로그인 정보가 바뀌면(다시 로그인) 바로 다시 쓴다. Codex는 `login-codex --slot n`으로 worker용 로그인을 따로 만든 것(맥 Codex와 같은 계정이어도 로그인은 별개), Claude는 `claude setup-token` 헤드리스 토큰.
 - 트리거: `cloud/api.py`가 `/api/items`, `/api/photos`, `/api/memos/extract` 처리 직후
   `LAMBDA_CLIENT.invoke(FunctionName='<WORKER_LAMBDA_NAME>', InvocationType='Event', ...)`로
   비동기 호출(실패해도 본 요청에는 영향 없음, try/except로 무시). api Lambda 역할에
@@ -85,10 +85,12 @@ Lambda 컨테이너로도 옮겼습니다. 맥을 안 켜놔도 자동 정리되
   워커를 깨움 — `ai_waiting`(1시간 재시도) 항목이 새 글 공유 없이도 처리되게, 그리고 invoke
   실패나 워커 크래시로 못 간 작업을 주워가게 하는 용도. 메인 트리거는 위 invoke이고
   이건 어디까지나 보험(비용은 거의 $0 — 프리티어 안에서 다 소화됨).
-- Codex 로그인 교체: `python3 cloud/worker_auth.py login-codex` — 임시 폴더에 맥과 따로 로그인해 `codex-auth`만 교체(맥 `~/.codex` 로그인을 넣으면 맥 Codex가 갱신할 때 worker가 깨짐).
+- Codex 로그인 넣기·교체: `python3 cloud/worker_auth.py login-codex --slot 1|2` — 임시 폴더에 따로 로그인해 그 칸만 교체(브라우저에 다른 계정이 로그인돼 있으면 출력된 주소를 시크릿 창에서).
+- Claude 토큰 넣기: 그 계정으로 `claude setup-token` → `python3 cloud/worker_auth.py set-claude --slot 1|2`(붙여 넣은 토큰은 화면에 안 보임).
+- 계정 2를 쓰려면 worker 역할에 `codex-auth-2`·`claude-token-2` 읽기, 갱신분 저장에 `codex-auth`·`codex-auth-2` 쓰기 권한 필요(이 맥 `data/iam/worker-codex-auth-write.json`).
 - worker는 실행마다 SSM에서 로그인 정보를 읽고, Codex가 토큰을 갱신하면 끝날 때 `codex-auth`에 다시 저장한다(worker 역할에 이 파라미터 `ssm:PutParameter` 필요). Codex가 실패하면 1시간 Codex를 쉬고 Claude로 정리한다.
 - 자격증명 재발급 시: 새 토큰/auth.json 준비 후
-  `python3 cloud/worker_auth.py set --codex ~/.codex2/auth.json --claude-token-file <토큰 파일>`
+  `python3 cloud/worker_auth.py set --codex <auth.json> --claude-token-file <토큰 파일>`
   로 교체(값은 출력하지 않음, `status`로 버전 확인). `<IAM_USER>` 사용자에 `ssm:PutParameter` 권한 필요
   (`data/iam/bookmark-shelf-ops.json`의 `WorkerAuth`). Lambda 재배포는 필요 없음(다음 콜드스타트부터 자동 반영).
 - 로컬 맥 워커(`cloud/worker.py`)는 당장은 그대로 같이 둠(둘 다 같은 claim/lease를 쓰니

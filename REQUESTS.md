@@ -843,7 +843,7 @@
 - 상태: ①③ 코드 배포 완료·대기 카드 7개 정리 완료. Codex 다시 로그인(②)과 ③의 권한 붙이기는 사용자 몫
 - 요청: AI 정리 대기 중인 문서들 왜 그런지 이유. → "다하고 다른 세션에서 한 기록도 확인". (텔레그램 알림은 비용 차이 없음 확인 후 하지 않기로 — CloudWatch 그대로)
 - 현상: 2026-10-13 밤(약 11.6시간 전)부터 저장한 카드 7개(X 6, Threads 1)가 모두 `ai_waiting`, 그 전 카드는 정상. 1시간마다 재시도해도 계속 실패.
-- 원인: 정리 작업은 SSM의 Codex 로그인 정보(auth.json)를 켜질 때마다 /tmp로 복사해 씀. Codex가 접속 토큰을 갱신하면 새 갱신 토큰은 그 실행의 /tmp에만 저장되고 SSM에는 옛 값이 남아, 다음에 새로 켜진 실행은 이미 쓰인 갱신 토큰으로 시도 → 영구 실패. 같은 로그인을 맥의 Codex와 함께 쓰면 맥 쪽 갱신으로도 같은 일이 생김.
+- 원인: 정리 작업은 SSM의 Codex 로그인 정보(auth.json)를 켜질 때마다 /tmp로 복사해 씀. Codex가 접속 토큰을 갱신하면 새 갱신 토큰은 그 실행의 /tmp에만 저장되고 SSM에는 옛 값이 남아, 다음에 새로 켜진 실행은 이미 쓰인 갱신 토큰으로 시도 → 영구 실패. (정정: 처음엔 맥 Codex와 로그인을 함께 써서일 수도 있다고 했으나, worker는 처음부터 전용 두 번째 계정(`~/.codex2`, MacBook Air)이라 원인은 worker가 갱신분을 저장 안 한 것 하나.)
 - 구조 문제: Codex가 한도 초과가 아닌 이유로 실패하면 Claude로 넘어가지 않고 바로 대기로 돌려서, Codex 로그인 하나가 깨지면 정리 전체가 멈춤.
 - 고치는 방법(사용자에게 제안): ① Codex가 어떤 이유로 실패해도 Claude로 넘어가게 ② Codex 다시 로그인 후 SSM 값 교체 ③ 재발 방지: 정리 작업이 갱신된 로그인 정보를 SSM에 다시 저장.
 - 처리 ①: `ai_runner.py` `run_summary` — Codex가 한도·로그인·연결 어떤 이유로 실패해도 1시간 Codex를 쉬고 Claude로 넘김(로그에 `codex 실패(한도|오류) → claude`). 테스트 `test_login_or_connection_error_switches_to_claude`로 교체.
@@ -857,4 +857,27 @@
   - 화면 `static/index.html`: `ledgerBook`·`ledgerCache`·`ledgerQ()`·`lb()`·`setLedgerBook()` 추가, 가계부 요청 8곳에 권 표시, 새로고침은 보고 있는 권만 받고 받는 사이 권이 바뀌면 덮어쓰지 않음.
   - 연결 안내: 사이드바를 세로 flex로 바꾸고 `#settings`에 `margin-top:auto` → 메뉴 맨 아래에 붙음.
   - 테스트 `tests/test_ledger.py`에 `SharedBook` 3개(권 분리, 다른 권 삭제 불가, 모르는 권 거부). 전체 177개 통과. 화면 스크립트 문법 검사(JavaScriptCore `checkSyntax`) 통과.
+
+### 2026-10-14 Codex는 계정 하나만, Claude는 계정 2개 쓸 수 있게 준비
+- 상태: 코드 배포 완료. Claude 계정 2 토큰 넣기·권한 붙이기는 사용자 몫(계정 2는 아직 결제 전)
+- 요청: 모두 아까 로그인한 Codex 계정을 쓰게(Codex는 1개 계정만), Claude는 2개 계정을 쓸 수 있도록 준비.
+- 처리:
+  - Codex: worker는 이미 그 계정(SSM `codex-auth` 버전 2)을 씀 — 코드 변경 없음. 문서·`worker_auth.py` 설명에서 "worker 전용 두 번째 Codex 계정(`~/.codex2`)" 내용을 걷어 내고 "Codex 계정 하나, worker용 로그인만 따로"로 정리(`cloud/INFRA.md`, `SYNC.md`).
+  - Claude 2계정: `ai_runner.py` `run_claude` — `CLAUDE_CODE_OAUTH_TOKEN`(계정 1) → `CLAUDE_CODE_OAUTH_TOKEN_2`(계정 2) 순서로 시도, 실패한 계정은 1시간 건너뜀, 로그에 `claude 실패(계정 n)`. 토큰이 없으면(맥 로컬) 기본 로그인. `cloud/worker_handler.py` — SSM `claude-token-2`가 있으면 읽어서 계정 2로(없거나 권한 없으면 계정 1만). `cloud/worker_auth.py set-claude --slot 1|2` — 토큰을 화면에 안 보이게 입력받아 SSM에 넣음.
+  - 테스트 `test_second_claude_account`(계정 1 실패 → 2, 다음엔 1 건너뜀). 전체 179개 통과.
+
+### 2026-10-14 정리 작업 AI 순서: Codex 1 → Codex 2 → Claude 1 → Claude 2
+- 상태: 코드 배포 완료. 계정 2 정보 넣기·권한 붙이기는 사용자 몫
+- 요청: 매번 바꿀 수 없으니 codex1-codex2-claude1-claude2로 넘어가게 구성, 두 번째 계정 정보를 안 주면 그냥 스킵. (바로 앞의 "Codex는 계정 하나만"을 대체)
+- 처리:
+  - `ai_runner.py` `run_summary`: `codex_accounts()` — 계정 1(기본 CODEX_HOME) → 계정 2(`CODEX_HOME_2`에 auth.json이 있을 때만) 순서로 Codex 시도, 계정별 1시간 쉼 파일(`codex-cooldown.json`, `codex-cooldown-2.json`), 둘 다 안 되면 `run_claude`(Claude 1 → 2). 로그 `codex 실패(계정 n, 한도|오류) → 다음`.
+  - `cloud/worker_handler.py`: SSM `codex-auth-2`가 있으면 `/tmp/.codex2/auth.json`에 두고 `CODEX_HOME_2` 설정, 없거나 권한 없으면 건너뜀(`load_optional`). Codex 갱신분 저장을 계정별로(`CODEX_SLOTS`).
+  - `cloud/worker_auth.py`: `login-codex --slot 1|2`, `set-claude --slot 1|2`, 이름 목록에 `codex-auth-2`. `cloud/INFRA.md` 순서·명령·권한 갱신.
+  - 테스트 `test_codex_account_order_and_skip_missing_second`, 저장 테스트를 계정별 구조로. 전체 180개 통과.
+
+### 2026-10-14 로그인 실패한 AI 계정은 하루 동안 건너뛰기
+- 상태: 완료
+- 요청: 로그인 실패는 1시간 대기 없이 바로 넘어가서 하루 동안은 안 쓰이는 로직 추가.
+- 처리(`ai_runner.py`): `login_failed()`(refresh token·sign in again·401·unauthorized·token expired·/login 등, 한도 초과 문구는 제외)로 로그인 실패를 구분. Codex는 계정별 쉼 파일에 `{until, login, fp}`, Claude는 메모리에 `(until, 토큰 지문)` — 로그인 실패면 하루(86400초), 한도·연결 오류는 1시간. 어느 쪽이든 그 자리에서 바로 다음 계정으로 넘어감(전과 같음). 로그인 실패로 쉬는 중이라도 로그인 정보의 지문(sha256 앞 16자, 값 자체는 안 남김)이 바뀌면 다시 로그인한 것으로 보고 바로 다시 씀. 로그에 `실패(계정 n, 로그인|한도|오류)`. 
+- 테스트 3개 추가(하루 쉼·다시 로그인 시 복귀, Claude 로그인 실패 하루, 로그인/한도 구분). 전체 183개 통과. `cloud/INFRA.md`·`SYNC.md` 갱신.
 

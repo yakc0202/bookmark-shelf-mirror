@@ -8,7 +8,7 @@ set -eu
 MODE=${1:---check}
 case "$MODE" in --check|--push) ;; *) echo "알 수 없는 옵션: $MODE"; exit 1 ;; esac
 SRC=$(cd "$(dirname "$0")" && git rev-parse --show-toplevel)
-MIRROR=${MIRROR_DIR:-"$HOME/Documents/Codex/bookmark-shelf-mirror"}
+MIRROR=${MIRROR_DIR:-"$HOME/Documents/app/bookmark-shelf-mirror"}
 REDACT="$SRC/mirror-redact.txt"
 [ -f "$REDACT" ] || { echo "중단: $REDACT 가 없음 (가릴 값 목록이 필요)"; exit 1; }
 [ -d "$MIRROR/.git" ] || git clone -q https://github.com/<GITHUB_USER>/bookmark-shelf-mirror "$MIRROR"
