@@ -73,17 +73,18 @@ class WorkerAuthTest(unittest.TestCase):
             mod = importlib.reload(importlib.import_module('worker_handler'))
             import tempfile
             with tempfile.TemporaryDirectory() as d:
-                mod.CODEX_AUTH = Path(d) / 'auth.json'
-                mod.CODEX_AUTH.write_text(json.dumps(CODEX))
-                mod.save_refreshed_codex_auth(CODEX)          # 안 바뀌면 저장 안 함
+                path = Path(d) / 'auth.json'
+                mod.CODEX_SLOTS[1] = ('codex-auth', path)
+                path.write_text(json.dumps(CODEX))
+                mod.save_refreshed_codex_auth({1: CODEX})          # 안 바뀌면 저장 안 함
                 self.assertEqual(puts, [])
                 new = {**CODEX, 'tokens': {'id_token': 'y'}}
-                mod.CODEX_AUTH.write_text(json.dumps(new))
-                mod.save_refreshed_codex_auth(CODEX)
+                path.write_text(json.dumps(new))
+                mod.save_refreshed_codex_auth({1: CODEX})
                 self.assertEqual(len(puts), 1)
                 self.assertEqual((puts[0]['Name'], json.loads(puts[0]['Value']), puts[0]['Overwrite']), ('/p/codex-auth', new, True))
-                mod.CODEX_AUTH.write_text('{broken')
-                mod.save_refreshed_codex_auth(CODEX)          # 깨진 파일은 저장 안 함
+                path.write_text('{broken')
+                mod.save_refreshed_codex_auth({1: CODEX})          # 깨진 파일은 저장 안 함
                 self.assertEqual(len(puts), 1)
 
 

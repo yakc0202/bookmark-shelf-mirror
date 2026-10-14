@@ -121,7 +121,7 @@ workflow = {
     'WFWorkflowInputContentItemClasses':['WFURLContentItem','WFStringContentItem','WFSafariWebPageContentItem','WFImageContentItem'],
     'WFWorkflowImportQuestions':[
         {'ActionIndex':0, 'Category':'Parameter', 'ParameterKey':'WFTextActionText',
-         'Text':'맥의 link-shelf/data/token 파일에 있는 접속 키를 붙여 넣으세요. Bearer는 붙이지 않습니다.', 'DefaultValue':''},
+         'Text':'맥의 bookmark-shelf/data/token 파일에 있는 접속 키를 붙여 넣으세요. Bearer는 붙이지 않습니다.', 'DefaultValue':''},
     ],
 }
 import tempfile

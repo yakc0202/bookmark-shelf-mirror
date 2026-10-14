@@ -5,8 +5,9 @@
 등급은 Intelligent-Tiering — 4KB 안이면 무료, 넘으면 그 파라미터만 Advanced(월 $0.05)로 자동 전환.
 
 사용:
-  python3 cloud/worker_auth.py login-codex   # 이 맥의 Codex와 섞이지 않는 따로 된 로그인을 새로 만들어 Codex 값만 교체(브라우저 로그인)
-  python3 cloud/worker_auth.py set --codex ~/.codex2/auth.json --claude-token-file <토큰 파일>
+  python3 cloud/worker_auth.py login-codex --slot 1|2   # 그 Codex 계정으로 worker용 로그인을 따로 만들어 넣음 — 맥 Codex와 같은 계정이어도 로그인이 따로라 서로 안 깨짐
+  python3 cloud/worker_auth.py set-claude --slot 2   # Claude 계정 토큰 넣기(1 또는 2). 먼저 그 계정으로 `claude setup-token` 해서 받은 토큰을 붙여 넣음(화면에 안 보임)
+  python3 cloud/worker_auth.py set --codex <auth.json> --claude-token-file <토큰 파일>
   python3 cloud/worker_auth.py migrate     # 예전 Secrets Manager 값을 그대로 복사(1회용)
   python3 cloud/worker_auth.py status      # 이름·버전·바뀐 시각만 표시(값은 안 읽음)
 """
@@ -22,7 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import site_config as cfg  # noqa: E402
 
 PREFIX = '/<WORKER_SECRET_NAME>/'
-NAMES = {'codex': PREFIX + 'codex-auth', 'claude': PREFIX + 'claude-token'}
+NAMES = {'codex': PREFIX + 'codex-auth', 'codex2': PREFIX + 'codex-auth-2',
+         'claude': PREFIX + 'claude-token', 'claude2': PREFIX + 'claude-token-2'}  # 계정 2는 넣을 때만 쓰고 없으면 건너뜀
 OLD_SECRET = '<WORKER_SECRET_NAME>'
 
 
@@ -58,7 +60,10 @@ def main():
     s = sub.add_parser('set')
     s.add_argument('--codex', required=True)
     s.add_argument('--claude-token-file', required=True)
-    sub.add_parser('login-codex')
+    lc = sub.add_parser('login-codex')
+    lc.add_argument('--slot', type=int, choices=(1, 2), default=1)
+    c = sub.add_parser('set-claude')
+    c.add_argument('--slot', type=int, choices=(1, 2), default=1)
     sub.add_parser('migrate')
     sub.add_parser('status')
     a = ap.parse_args()
@@ -75,8 +80,14 @@ def main():
             auth = json.loads((Path(home) / 'auth.json').read_text())
             if not isinstance(auth, dict) or 'tokens' not in auth:
                 raise SystemExit('Codex auth.json 형식이 아님(tokens 없음)')
-            put(NAMES['codex'], json.dumps(auth, separators=(',', ':')))
+            put(NAMES['codex' if a.slot == 1 else 'codex2'], json.dumps(auth, separators=(',', ':')))
         print('임시 로그인 폴더는 지웠습니다. worker는 다음 실행부터 새 로그인을 씁니다.')
+    elif a.cmd == 'set-claude':
+        import getpass
+        token = getpass.getpass(f'Claude 계정 {a.slot} 토큰(claude setup-token 결과, 화면에 안 보임): ').strip()
+        if not token.startswith('sk-ant-'):
+            raise SystemExit('Claude 토큰 형식이 아님(sk-ant- 로 시작해야 함)')
+        put(NAMES['claude' if a.slot == 1 else 'claude2'], token)
     elif a.cmd == 'migrate':
         secret = json.loads(aws('secretsmanager', 'get-secret-value', '--secret-id', OLD_SECRET)['SecretString'])
         put_both(secret['codex_auth'], secret['claude_token'])

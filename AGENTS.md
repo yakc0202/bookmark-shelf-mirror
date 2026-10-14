@@ -33,7 +33,7 @@ Claude Code, Codex 등 이 저장소에서 일하는 모든 에이전트에 적�
 
 1. 배포: 화면(`static/index.html`)은 S3 업로드, `cloud/api.py`는 `python3 cloud/deploy.py`, 정리 작업 코드는 `python3 cloud/deploy_worker.py`(명령은 `SETUP.md` "배포").
 2. `git push origin main`. force-push 금지.
-3. 공개 미러는 `./mirror-push.sh`로만 올린다(대상 `bookmark-shelf-mirror`, 작업 폴더 `~/Documents/Codex/bookmark-shelf-mirror`).
+3. 공개 미러는 `./mirror-push.sh`로만 올린다(대상 `bookmark-shelf-mirror`, 작업 폴더 `~/Documents/app/bookmark-shelf-mirror`).
    - 먼저 `./mirror-push.sh`로 미리보기를 보여 주고, 사용자가 승인하면 `./mirror-push.sh --push`.
    - 공개 미러에는 보안 관련 값을 하나도 넣지 않는다: 계정·리소스 ID, 엔드포인트, 키, 해시, 도메인, 리전, AWS 리소스 이름, IAM 사용자·프로필, GitHub 아이디, DNS 업체 이름. 실제 값 목록은 저장소 맨 위 `mirror-redact.txt`(비공개 저장소에만 커밋, `mirror-push.sh`가 미러에서 제외)에 `실제값 => <표시>`로 적는다(긴 값 먼저). 다른 맥에서도 `git pull`만 하면 같은 규칙으로 미러 push 가능.
    - 가릴 수 없는 파일은 스크립트의 `EXCLUDE`로 미러에서 뺀다(API 주소가 든 단축어, `docs/서랍-구성-안내.md`).

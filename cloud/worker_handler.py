@@ -26,7 +26,8 @@ TOKEN = os.environ['WORKER_TOKEN']
 PARAM_PREFIX = os.environ.get('AUTH_PARAM_PREFIX')
 SECRET_ARN = os.environ.get('AUTH_SECRET_ARN')
 
-CODEX_AUTH = Path('/tmp/.codex/auth.json')
+# 계정 번호 → (SSM 이름 끝, /tmp 로그인 파일). 계정 2는 SSM에 있을 때만 쓴다.
+CODEX_SLOTS = {1: ('codex-auth', Path('/tmp/.codex/auth.json')), 2: ('codex-auth-2', Path('/tmp/.codex2/auth.json'))}
 
 def load_auth():
     """(codex auth.json dict, claude token). SSM이 기본, 없으면 예전 Secrets Manager."""
@@ -41,32 +42,65 @@ def load_auth():
     secret = json.loads(boto3.client('secretsmanager').get_secret_value(SecretId=SECRET_ARN)['SecretString'])
     return secret['codex_auth'], secret['claude_token']
 
-def bootstrap_credentials():
-    """실행마다 SSM에서 로그인 정보를 받아 /tmp에 둔다(다른 실행이 갱신해 저장한 Codex 토큰을 쓰도록). 받은 Codex 값을 돌려준다."""
-    codex_auth, claude_token = load_auth()
-    CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
-    CODEX_AUTH.write_text(json.dumps(codex_auth))
-    CODEX_AUTH.chmod(0o600)
-    os.environ['CLAUDE_CODE_OAUTH_TOKEN'] = claude_token
-    return codex_auth
+def write_codex(path, auth):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(auth))
+    path.chmod(0o600)
 
-def save_refreshed_codex_auth(before):
+def bootstrap_credentials():
+    """실행마다 SSM에서 로그인 정보를 받아 /tmp에 둔다(다른 실행이 갱신해 저장한 토큰을 쓰도록). 받은 Codex 값을 계정별로 돌려준다."""
+    codex_auth, claude_token = load_auth()
+    befores = {1: codex_auth}
+    write_codex(CODEX_SLOTS[1][1], codex_auth)
+    os.environ['CLAUDE_CODE_OAUTH_TOKEN'] = claude_token
+    codex2 = load_optional('codex-auth-2')
+    try:
+        codex2 = json.loads(codex2) if codex2 else None
+    except ValueError:
+        codex2 = None
+    if isinstance(codex2, dict) and 'tokens' in codex2:
+        write_codex(CODEX_SLOTS[2][1], codex2)
+        os.environ['CODEX_HOME_2'] = str(CODEX_SLOTS[2][1].parent)
+        befores[2] = codex2
+    else:
+        os.environ.pop('CODEX_HOME_2', None)
+        CODEX_SLOTS[2][1].unlink(missing_ok=True)
+    claude2 = load_optional('claude-token-2')
+    if claude2:
+        os.environ['CLAUDE_CODE_OAUTH_TOKEN_2'] = claude2
+    else:
+        os.environ.pop('CLAUDE_CODE_OAUTH_TOKEN_2', None)
+    return befores
+
+def load_optional(suffix):
+    """두 번째 계정 정보(선택). 없거나 읽을 권한이 없으면 빈 값 → 그 계정은 건너뛴다."""
+    if not PARAM_PREFIX:
+        return ''
+    import boto3
+    try:
+        return boto3.client('ssm').get_parameter(Name=PARAM_PREFIX + suffix, WithDecryption=True)['Parameter']['Value'].strip()
+    except Exception:
+        return ''
+
+def save_refreshed_codex_auth(befores):
     """Codex가 실행 중 토큰을 갱신했으면 새 값을 SSM에 다시 저장한다(갱신 토큰은 한 번만 쓸 수 있어, 안 그러면 다음 실행이 옛 값으로 실패)."""
     if not PARAM_PREFIX:
         return
-    try:
-        after = json.loads(CODEX_AUTH.read_text())
-    except (OSError, ValueError):
-        return
-    if after == before or not isinstance(after, dict) or 'tokens' not in after:
-        return
-    import boto3
-    try:
-        boto3.client('ssm').put_parameter(Name=PARAM_PREFIX + 'codex-auth', Value=json.dumps(after, separators=(',', ':')),
-                                          Type='SecureString', Tier='Intelligent-Tiering', Overwrite=True)
-        print('codex 로그인 갱신분을 SSM에 저장', flush=True)
-    except Exception as e:
-        print('codex 로그인 갱신분 저장 실패:', type(e).__name__, str(e)[:160], flush=True)
+    for n, before in befores.items():
+        suffix, path = CODEX_SLOTS[n]
+        try:
+            after = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if after == before or not isinstance(after, dict) or 'tokens' not in after:
+            continue
+        import boto3
+        try:
+            boto3.client('ssm').put_parameter(Name=PARAM_PREFIX + suffix, Value=json.dumps(after, separators=(',', ':')),
+                                              Type='SecureString', Tier='Intelligent-Tiering', Overwrite=True)
+            print(f'codex 계정 {n} 로그인 갱신분을 SSM에 저장', flush=True)
+        except Exception as e:
+            print(f'codex 계정 {n} 로그인 갱신분 저장 실패:', type(e).__name__, str(e)[:160], flush=True)
 
 def call(path, body):
     req = urllib.request.Request(API + path, data=json.dumps(body).encode(),
