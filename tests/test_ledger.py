@@ -78,3 +78,19 @@ class LedgerPlans(unittest.TestCase):
   api.change(self.data,'/api/ledger/plans/delete',{'id':p['id']})
   self.assertEqual(self.data['ledger_plans'],[])
 if __name__=='__main__':unittest.main()
+
+class SharedBook(unittest.TestCase):
+ def setUp(self):self.data={}
+ def test_shared_entries_and_plans_stay_separate(self):
+  mine=api.change(self.data,'/api/ledger/save',{'date':'2026-10-06','amount':1000,'category':'식비'})
+  shared=api.change(self.data,'/api/ledger/save',{'date':'2026-10-06','amount':50000,'category':'관리비','book':'shared'})
+  self.assertEqual(self.data['ledger'],[mine]);self.assertEqual(self.data['shared_ledger'],[shared])
+  p=api.change(self.data,'/api/ledger/plans/save',{'cycle':'2026-10','title':'월세','amount':500000,'book':'shared'})
+  out=api.change(self.data,'/api/ledger/plans/check',{'id':p['id'],'checked':True,'date':'2026-10-07','book':'shared'})
+  self.assertEqual(len(self.data['shared_ledger']),2);self.assertEqual(len(self.data['ledger']),1)
+  self.assertEqual(len(out['ledger']),2);self.assertNotIn('ledger_plans',self.data)
+ def test_cannot_touch_other_book(self):
+  e=api.change(self.data,'/api/ledger/save',{'date':'2026-10-06','amount':1000})
+  with self.assertRaises(api.Problem):api.change(self.data,'/api/ledger/delete',{'id':e['id'],'book':'shared'})
+ def test_unknown_book_rejected(self):
+  with self.assertRaises(api.Problem):api.change(self.data,'/api/ledger/save',{'date':'2026-10-06','amount':1000,'book':'other'})

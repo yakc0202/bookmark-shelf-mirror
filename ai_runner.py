@@ -1,4 +1,4 @@
-"""Codex first; Claude Code on quota exhaustion, with a one-hour Codex cooldown."""
+"""Codex first; Claude Code whenever Codex fails (quota, login, network), with a one-hour Codex cooldown."""
 import base64
 import json
 from pathlib import Path
@@ -13,6 +13,11 @@ class SummaryUnavailable(Exception):
 
 def quota_exhausted(message):
     return bool(re.search(r'usage[_ ]limit|rate[_ -]?limit|quota|insufficient_quota|credits?.{0,35}(exhausted|remaining|limit)|hit.{0,25}(limit|cap)|limit.{0,35}(reached|exceeded)|too many requests|사용량.{0,20}(한도|초과)',message,re.I))
+
+def brief(text):
+    """실패 원인 로그용: 마지막 몇 줄만, 토큰·키처럼 보이는 긴 값은 가린다."""
+    lines=[l for l in str(text or '').splitlines() if l.strip()][-4:]
+    return re.sub(r'[A-Za-z0-9_\-\.]{32,}','<가림>',' | '.join(lines))[:400]
 
 def image_paths(image_path):
     if not image_path:return []
@@ -41,6 +46,7 @@ def run_claude(prompt,schema,workdir,image_path=None,check=validate):
         except ValueError:pass
     final=next((e for e in reversed(events) if e.get('type')=='result'),{})
     if result.returncode or final.get('is_error'):
+        print('claude 실패:',result.returncode,brief(final.get('result') or result.stderr or result.stdout),flush=True)
         raise SummaryUnavailable('Claude Code 로그인 또는 사용 한도를 확인해 주세요.')
     return check(final.get('structured_output'))
 
@@ -81,7 +87,8 @@ def run_summary(prompt,schema,data,image_path=None,check=validate):
             if result.returncode==0 and (p/'result.json').exists():
                 try:return check(json.loads((p/'result.json').read_text()))
                 except ValueError:raise SummaryUnavailable('Codex 응답 형식 오류입니다.')
-            if not quota_exhausted(result.stdout+'\n'+result.stderr):
-                raise SummaryUnavailable('Codex 연결 실패입니다. 나중에 다시 시도합니다.')
+            # 한도 초과든 로그인 만료·연결 오류든 Codex가 안 되면 1시간 쉬고 Claude로 넘긴다(Codex 하나 때문에 정리 전체가 멈추지 않게).
+            reason='한도' if quota_exhausted(result.stdout+'\n'+result.stderr) else '오류'
+            print('codex 실패('+reason+') → claude:',result.returncode,brief(result.stderr or result.stdout),flush=True)
             cooldown.write_text(json.dumps({'until':time.time()+3600}));cooldown.chmod(0o600)
         return run_claude(prompt,schema,p,image_path,check)

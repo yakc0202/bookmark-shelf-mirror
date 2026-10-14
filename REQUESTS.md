@@ -838,3 +838,23 @@
 - 원인: manifest(앱 설정 파일)가 모든 기기에 붙어 맥 크롬 등이 설치 가능한 앱으로 인식.
 - 처리(`static/index.html`): manifest 링크를 머리말 스크립트로 휴대폰·태블릿(iPhone·iPad·Android, 터치 되는 iPad의 맥 표시 포함)에서만 붙임. 아이폰 홈 화면 앱 설정(`apple-mobile-web-app-*`)은 그대로.
 - 알아둘 점: 맥에서 이미 앱으로 설치했다면 그 앱은 남아 있음 — 크롬 주소창에 `chrome://apps`에서 서랍 우클릭 → 삭제. 맥 브라우저에 설치 아이콘이 캐시로 잠깐 남으면 새로고침.
+
+### 2026-10-14 AI 정리 대기 카드 7개 원인: 정리 작업의 Codex 로그인 만료(갱신 토큰 재사용)
+- 상태: ①③ 코드 배포 완료·대기 카드 7개 정리 완료. Codex 다시 로그인(②)과 ③의 권한 붙이기는 사용자 몫
+- 요청: AI 정리 대기 중인 문서들 왜 그런지 이유. → "다하고 다른 세션에서 한 기록도 확인". (텔레그램 알림은 비용 차이 없음 확인 후 하지 않기로 — CloudWatch 그대로)
+- 현상: 2026-10-13 밤(약 11.6시간 전)부터 저장한 카드 7개(X 6, Threads 1)가 모두 `ai_waiting`, 그 전 카드는 정상. 1시간마다 재시도해도 계속 실패.
+- 원인: 정리 작업은 SSM의 Codex 로그인 정보(auth.json)를 켜질 때마다 /tmp로 복사해 씀. Codex가 접속 토큰을 갱신하면 새 갱신 토큰은 그 실행의 /tmp에만 저장되고 SSM에는 옛 값이 남아, 다음에 새로 켜진 실행은 이미 쓰인 갱신 토큰으로 시도 → 영구 실패. 같은 로그인을 맥의 Codex와 함께 쓰면 맥 쪽 갱신으로도 같은 일이 생김.
+- 구조 문제: Codex가 한도 초과가 아닌 이유로 실패하면 Claude로 넘어가지 않고 바로 대기로 돌려서, Codex 로그인 하나가 깨지면 정리 전체가 멈춤.
+- 고치는 방법(사용자에게 제안): ① Codex가 어떤 이유로 실패해도 Claude로 넘어가게 ② Codex 다시 로그인 후 SSM 값 교체 ③ 재발 방지: 정리 작업이 갱신된 로그인 정보를 SSM에 다시 저장.
+- 처리 ①: `ai_runner.py` `run_summary` — Codex가 한도·로그인·연결 어떤 이유로 실패해도 1시간 Codex를 쉬고 Claude로 넘김(로그에 `codex 실패(한도|오류) → claude`). 테스트 `test_login_or_connection_error_switches_to_claude`로 교체.
+- 처리 ③: `cloud/worker_handler.py` — 실행마다 SSM에서 로그인 정보를 다시 받고(다른 실행이 갱신해 둔 값 사용), 끝날 때 Codex가 토큰을 갱신했으면 `codex-auth`에 다시 저장(`save_refreshed_codex_auth`, Intelligent-Tiering, 실패해도 정리는 계속). 테스트 `test_refreshed_codex_login_is_saved_back`. 이 저장은 worker 역할에 `ssm:PutParameter` 권한이 있어야 동작 — 지금은 없음(사용자가 붙여야 함, 없으면 로그에 "저장 실패").
+
+### 2026-10-14 가계부에 공용 통장용 가계부 탭 신설, 연결 안내를 메뉴 맨 아래로
+- 상태: 완료(다른 세션에서 서버 배포, 2026-10-14 이 세션에서 화면 배포)
+- 처리:
+  - 가계부 아래 탭을 `가계부 | 공용 통장 | 위시리스트`로. 주소 `#ledger/shared`, 화면 제목 "공용 통장". 내역·지출 계획·달력·합계 등 가계부 기능을 그대로 쓰고 데이터만 따로.
+  - 서버 `cloud/api.py`: `ledger_keys(book)` 추가. `book:'shared'`(POST 본문) 또는 `?book=shared`(GET)면 `shared_ledger`·`shared_ledger_plans`에 저장·조회, 없거나 `book`이면 기존 `ledger`·`ledger_plans`(기존 화면과 호환). 다른 값은 400. 다른 권의 내역은 고치거나 지울 수 없음.
+  - 화면 `static/index.html`: `ledgerBook`·`ledgerCache`·`ledgerQ()`·`lb()`·`setLedgerBook()` 추가, 가계부 요청 8곳에 권 표시, 새로고침은 보고 있는 권만 받고 받는 사이 권이 바뀌면 덮어쓰지 않음.
+  - 연결 안내: 사이드바를 세로 flex로 바꾸고 `#settings`에 `margin-top:auto` → 메뉴 맨 아래에 붙음.
+  - 테스트 `tests/test_ledger.py`에 `SharedBook` 3개(권 분리, 다른 권 삭제 불가, 모르는 권 거부). 전체 177개 통과. 화면 스크립트 문법 검사(JavaScriptCore `checkSyntax`) 통과.
+

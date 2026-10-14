@@ -5,6 +5,7 @@
 등급은 Intelligent-Tiering — 4KB 안이면 무료, 넘으면 그 파라미터만 Advanced(월 $0.05)로 자동 전환.
 
 사용:
+  python3 cloud/worker_auth.py login-codex   # 이 맥의 Codex와 섞이지 않는 따로 된 로그인을 새로 만들어 Codex 값만 교체(브라우저 로그인)
   python3 cloud/worker_auth.py set --codex ~/.codex2/auth.json --claude-token-file <토큰 파일>
   python3 cloud/worker_auth.py migrate     # 예전 Secrets Manager 값을 그대로 복사(1회용)
   python3 cloud/worker_auth.py status      # 이름·버전·바뀐 시각만 표시(값은 안 읽음)
@@ -57,12 +58,25 @@ def main():
     s = sub.add_parser('set')
     s.add_argument('--codex', required=True)
     s.add_argument('--claude-token-file', required=True)
+    sub.add_parser('login-codex')
     sub.add_parser('migrate')
     sub.add_parser('status')
     a = ap.parse_args()
     if a.cmd == 'set':
         put_both(json.loads(Path(os.path.expanduser(a.codex)).read_text()),
                  Path(os.path.expanduser(a.claude_token_file)).read_text())
+    elif a.cmd == 'login-codex':
+        # 맥의 ~/.codex 로그인을 그대로 쓰면 맥 Codex가 토큰을 갱신할 때 worker 쪽이 깨진다 → 임시 폴더에 따로 로그인.
+        with tempfile.TemporaryDirectory(prefix='codex-worker-') as home:
+            env = {**os.environ, 'CODEX_HOME': home}
+            # 키체인 말고 auth.json 파일로 저장하게
+            if subprocess.run(['codex', 'login', '-c', 'cli_auth_credentials_store="file"'], env=env).returncode != 0:
+                raise SystemExit('codex login 실패')
+            auth = json.loads((Path(home) / 'auth.json').read_text())
+            if not isinstance(auth, dict) or 'tokens' not in auth:
+                raise SystemExit('Codex auth.json 형식이 아님(tokens 없음)')
+            put(NAMES['codex'], json.dumps(auth, separators=(',', ':')))
+        print('임시 로그인 폴더는 지웠습니다. worker는 다음 실행부터 새 로그인을 씁니다.')
     elif a.cmd == 'migrate':
         secret = json.loads(aws('secretsmanager', 'get-secret-value', '--secret-id', OLD_SECRET)['SecretString'])
         put_both(secret['codex_auth'], secret['claude_token'])

@@ -312,8 +312,15 @@ def clean_entry_url(raw):
         raise Problem(400,'http 또는 https 링크만 추가할 수 있습니다.')
     return urllib.parse.urlunsplit((u.scheme,u.netloc.lower(),u.path,u.query,'')), u.hostname
 
+def ledger_keys(book):
+    # 가계부는 두 권: 내 가계부(기본)와 공용 통장. 데이터는 키를 나눠 섞이지 않게 둔다.
+    if book in (None,'','book'):return 'ledger','ledger_plans'
+    if book=='shared':return 'shared_ledger','shared_ledger_plans'
+    raise Problem(400,'알 수 없는 가계부입니다.')
+
 def change(data, path, body):
     now=time.time()
+    if path.startswith('/api/ledger'):LK,PK=ledger_keys(body.get('book'))
     if path=='/api/habits/save':
         habits=data.setdefault('habits',[])
         habit_id=body.get('id')
@@ -367,7 +374,7 @@ def change(data, path, body):
                 if b.get('pass_id')==old['id']:b['pass_id']=''
         return {'message':'삭제했어요.'}
     if path=='/api/ledger/save':
-        ledger=data.setdefault('ledger',[])
+        ledger=data.setdefault(LK,[])
         entry_id=body.get('id')
         old=next((e for e in ledger if e['id']==entry_id),None)
         if entry_id and not old:raise Problem(404,'가계부 내역이 없습니다.')
@@ -431,15 +438,15 @@ def change(data, path, body):
         wish.remove(old)
         return {'message':'삭제했어요.'}
     if path=='/api/ledger/delete':
-        ledger=data.setdefault('ledger',[])
+        ledger=data.setdefault(LK,[])
         old=next((e for e in ledger if e['id']==body.get('id')),None)
         if not old:raise Problem(404,'가계부 내역이 없습니다.')
         ledger.remove(old)
-        for plan in data.get('ledger_plans',[]):
+        for plan in data.get(PK,[]):
             if plan.get('entry_id')==old['id']:plan.update(done=False,entry_id='',done_date='')
         return {'message':'삭제했어요.'}
     if path=='/api/ledger/plans/save':
-        plans=data.setdefault('ledger_plans',[])
+        plans=data.setdefault(PK,[])
         plan_id=body.get('id')
         old=next((p for p in plans if p['id']==plan_id),None)
         if plan_id and not old:raise Problem(404,'지출 계획이 없습니다.')
@@ -456,19 +463,19 @@ def change(data, path, body):
               'done_date':old.get('done_date','') if old else '','created':old['created'] if old else now}
         if old:plans[plans.index(old)]=plan
         else:plans.append(plan)
-        entry=next((e for e in data.get('ledger',[]) if plan['entry_id'] and e['id']==plan['entry_id']),None)
+        entry=next((e for e in data.get(LK,[]) if plan['entry_id'] and e['id']==plan['entry_id']),None)
         if entry:
             entry.update(amount=plan['amount'],category=plan['category'])
             if entry.get('memo','')==old['title']:entry['memo']=plan['title']
         return plan
     if path=='/api/ledger/plans/delete':
-        plans=data.setdefault('ledger_plans',[])
+        plans=data.setdefault(PK,[])
         old=next((p for p in plans if p['id']==body.get('id')),None)
         if not old:raise Problem(404,'지출 계획이 없습니다.')
         plans.remove(old)
         return {'message':'삭제했어요.'}
     if path=='/api/ledger/plans/check':
-        plans=data.setdefault('ledger_plans',[]);ledger=data.setdefault('ledger',[])
+        plans=data.setdefault(PK,[]);ledger=data.setdefault(LK,[])
         plan=next((p for p in plans if p['id']==body.get('id')),None)
         if not plan:raise Problem(404,'지출 계획이 없습니다.')
         if body.get('checked'):
@@ -879,12 +886,15 @@ def handler(event, context):
             data,_=read();return response(200,data.get('wish_jobs',[])[-10:],accept_encoding)
         if method=='GET' and path=='/api/wishlist':
             data,_=read();return response(200,sorted(data.get('wishlist',[]),key=lambda w:w['created']),accept_encoding)
+        query=event.get('queryStringParameters') or {}
         if method=='GET' and path=='/api/ledger/plans':
-            data,_=read();return response(200,sorted(data.get('ledger_plans',[]),key=lambda p:p['created']),accept_encoding)
+            _,pk=ledger_keys(query.get('book'))
+            data,_=read();return response(200,sorted(data.get(pk,[]),key=lambda p:p['created']),accept_encoding)
         if method=='GET' and path=='/api/schedule':
             data,_=read();return response(200,schedule_of(data),accept_encoding)
         if method=='GET' and path=='/api/ledger':
-            data,_=read();return response(200,sorted(data.get('ledger',[]),key=lambda e:(e['date'],e['created']),reverse=True),accept_encoding)
+            lk,_=ledger_keys(query.get('book'))
+            data,_=read();return response(200,sorted(data.get(lk,[]),key=lambda e:(e['date'],e['created']),reverse=True),accept_encoding)
         if method=='GET' and path=='/api/habits':
             data,_=read();return response(200,sorted(data.get('habits',[]),key=lambda h:h['created']),accept_encoding)
         if method=='GET' and path=='/api/items':

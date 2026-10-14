@@ -26,7 +26,7 @@ TOKEN = os.environ['WORKER_TOKEN']
 PARAM_PREFIX = os.environ.get('AUTH_PARAM_PREFIX')
 SECRET_ARN = os.environ.get('AUTH_SECRET_ARN')
 
-_bootstrapped = False
+CODEX_AUTH = Path('/tmp/.codex/auth.json')
 
 def load_auth():
     """(codex auth.json dict, claude token). SSM이 기본, 없으면 예전 Secrets Manager."""
@@ -42,17 +42,31 @@ def load_auth():
     return secret['codex_auth'], secret['claude_token']
 
 def bootstrap_credentials():
-    global _bootstrapped
-    if _bootstrapped:
-        return
+    """실행마다 SSM에서 로그인 정보를 받아 /tmp에 둔다(다른 실행이 갱신해 저장한 Codex 토큰을 쓰도록). 받은 Codex 값을 돌려준다."""
     codex_auth, claude_token = load_auth()
-    codex_dir = Path('/tmp/.codex')
-    codex_dir.mkdir(parents=True, exist_ok=True)
-    auth_path = codex_dir / 'auth.json'
-    auth_path.write_text(json.dumps(codex_auth))
-    auth_path.chmod(0o600)
+    CODEX_AUTH.parent.mkdir(parents=True, exist_ok=True)
+    CODEX_AUTH.write_text(json.dumps(codex_auth))
+    CODEX_AUTH.chmod(0o600)
     os.environ['CLAUDE_CODE_OAUTH_TOKEN'] = claude_token
-    _bootstrapped = True
+    return codex_auth
+
+def save_refreshed_codex_auth(before):
+    """Codex가 실행 중 토큰을 갱신했으면 새 값을 SSM에 다시 저장한다(갱신 토큰은 한 번만 쓸 수 있어, 안 그러면 다음 실행이 옛 값으로 실패)."""
+    if not PARAM_PREFIX:
+        return
+    try:
+        after = json.loads(CODEX_AUTH.read_text())
+    except (OSError, ValueError):
+        return
+    if after == before or not isinstance(after, dict) or 'tokens' not in after:
+        return
+    import boto3
+    try:
+        boto3.client('ssm').put_parameter(Name=PARAM_PREFIX + 'codex-auth', Value=json.dumps(after, separators=(',', ':')),
+                                          Type='SecureString', Tier='Intelligent-Tiering', Overwrite=True)
+        print('codex 로그인 갱신분을 SSM에 저장', flush=True)
+    except Exception as e:
+        print('codex 로그인 갱신분 저장 실패:', type(e).__name__, str(e)[:160], flush=True)
 
 def call(path, body):
     req = urllib.request.Request(API + path, data=json.dumps(body).encode(),
@@ -61,7 +75,13 @@ def call(path, body):
         return json.load(res)
 
 def handler(event, context):
-    bootstrap_credentials()
+    codex_before = bootstrap_credentials()
+    try:
+        return drain(context)
+    finally:
+        save_refreshed_codex_auth(codex_before)
+
+def drain(context):
     from server import organize, extract_excerpt, summarize_memo, extract_bookings, extract_wishes, SummaryUnavailable
     processed = 0
     while processed < 20 and context.get_remaining_time_in_millis() > 30000:
@@ -107,7 +127,8 @@ def handler(event, context):
                                        image_path=photos if len(photos) > 1 else photos[0])
             else:
                 result = organize(item, folders=job['folders'], persist=False)
-        except (SummaryUnavailable, subprocess.TimeoutExpired):
+        except (SummaryUnavailable, subprocess.TimeoutExpired) as e:
+            print('ai_waiting', kind or 'card', item['id'][:6], type(e).__name__, str(e)[:200], flush=True)
             if kind == 'memo-extract':
                 result = {'status': 'ai_waiting', 'error': 'AI 추출 대기 중입니다. 1시간 뒤 다시 시도합니다.'}
             elif kind == 'memo-summary':

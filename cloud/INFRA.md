@@ -85,6 +85,8 @@ Lambda 컨테이너로도 옮겼습니다. 맥을 안 켜놔도 자동 정리되
   워커를 깨움 — `ai_waiting`(1시간 재시도) 항목이 새 글 공유 없이도 처리되게, 그리고 invoke
   실패나 워커 크래시로 못 간 작업을 주워가게 하는 용도. 메인 트리거는 위 invoke이고
   이건 어디까지나 보험(비용은 거의 $0 — 프리티어 안에서 다 소화됨).
+- Codex 로그인 교체: `python3 cloud/worker_auth.py login-codex` — 임시 폴더에 맥과 따로 로그인해 `codex-auth`만 교체(맥 `~/.codex` 로그인을 넣으면 맥 Codex가 갱신할 때 worker가 깨짐).
+- worker는 실행마다 SSM에서 로그인 정보를 읽고, Codex가 토큰을 갱신하면 끝날 때 `codex-auth`에 다시 저장한다(worker 역할에 이 파라미터 `ssm:PutParameter` 필요). Codex가 실패하면 1시간 Codex를 쉬고 Claude로 정리한다.
 - 자격증명 재발급 시: 새 토큰/auth.json 준비 후
   `python3 cloud/worker_auth.py set --codex ~/.codex2/auth.json --claude-token-file <토큰 파일>`
   로 교체(값은 출력하지 않음, `status`로 버전 확인). `<IAM_USER>` 사용자에 `ssm:PutParameter` 권한 필요
