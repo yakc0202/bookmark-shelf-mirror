@@ -64,5 +64,28 @@ class WorkerAuthTest(unittest.TestCase):
         self.assertEqual(worker_auth.NAMES['claude'], worker_auth.PREFIX + 'claude-token')
 
 
+    def test_refreshed_codex_login_is_saved_back(self):
+        puts = []
+        client = types.SimpleNamespace(put_parameter=lambda **kw: puts.append(kw))
+        boto3 = types.SimpleNamespace(client=lambda svc: client)
+        base = {'API_URL': 'https://x', 'WORKER_TOKEN': 't', 'AUTH_PARAM_PREFIX': '/p/'}
+        with mock.patch.dict(os.environ, base, clear=True), mock.patch.dict(sys.modules, {'boto3': boto3}):
+            mod = importlib.reload(importlib.import_module('worker_handler'))
+            import tempfile
+            with tempfile.TemporaryDirectory() as d:
+                mod.CODEX_AUTH = Path(d) / 'auth.json'
+                mod.CODEX_AUTH.write_text(json.dumps(CODEX))
+                mod.save_refreshed_codex_auth(CODEX)          # 안 바뀌면 저장 안 함
+                self.assertEqual(puts, [])
+                new = {**CODEX, 'tokens': {'id_token': 'y'}}
+                mod.CODEX_AUTH.write_text(json.dumps(new))
+                mod.save_refreshed_codex_auth(CODEX)
+                self.assertEqual(len(puts), 1)
+                self.assertEqual((puts[0]['Name'], json.loads(puts[0]['Value']), puts[0]['Overwrite']), ('/p/codex-auth', new, True))
+                mod.CODEX_AUTH.write_text('{broken')
+                mod.save_refreshed_codex_auth(CODEX)          # 깨진 파일은 저장 안 함
+                self.assertEqual(len(puts), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

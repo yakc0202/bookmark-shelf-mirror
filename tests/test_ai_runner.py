@@ -10,10 +10,11 @@ class Fallback(unittest.TestCase):
    self.assertEqual(a.run_summary('p',{},d),OUT)
    self.assertEqual(a.run_summary('p',{},d),OUT)
    self.assertEqual(a.subprocess.run.call_count,1);self.assertEqual(claude.call_count,2)
- def test_connection_error_does_not_switch(self):
-  with tempfile.TemporaryDirectory() as d,patch.object(a.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','network unavailable')),patch.object(a,'run_claude') as claude:
-   with self.assertRaises(a.SummaryUnavailable):a.run_summary('p',{},d)
-   claude.assert_not_called()
+ def test_login_or_connection_error_switches_to_claude(self):
+  for err in ('network unavailable','Failed to refresh token: refresh token was already used'):
+   with tempfile.TemporaryDirectory() as d,patch.object(a.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'',err)),patch.object(a,'run_claude',return_value=OUT) as claude:
+    self.assertEqual(a.run_summary('p',{},d),OUT);self.assertEqual(claude.call_count,1)
+    self.assertEqual(a.run_summary('p',{},d),OUT);self.assertEqual(a.subprocess.run.call_count,1)  # 1시간 동안 Codex 건너뜀
  def test_codex_success(self):
   def run(cmd,**kw):Path(cmd[cmd.index('-o')+1]).write_text(json.dumps(OUT));return subprocess.CompletedProcess(cmd,0,'','')
   with tempfile.TemporaryDirectory() as d,patch.object(a.subprocess,'run',side_effect=run),patch.object(a,'run_claude') as claude:
