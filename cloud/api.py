@@ -41,11 +41,26 @@ def read():
             return {'version':1,'items':[]}, None
         raise
 
+def arrowize(x):
+    """저장하는 모든 글의 '->'를 '→'로(제자리에서 바꿈). 주소·키·사진 이름에는 '->'가 나올 수 없어 안전하다."""
+    if isinstance(x, dict):
+        for k, v in x.items():
+            if isinstance(v, str):
+                if '->' in v:x[k] = v.replace('->', '→')
+            else:arrowize(v)
+    elif isinstance(x, list):
+        for i, v in enumerate(x):
+            if isinstance(v, str):
+                if '->' in v:x[i] = v.replace('->', '→')
+            else:arrowize(v)
+    return x
+
 def transact(change):
     for attempt in range(8):
         data, etag = read()
         before = copy.deepcopy(data)
         result = change(data)
+        arrowize(data)  # 사용자 입력·AI 결과·링크 제목 모두(예전 데이터도 다음 저장 때 함께 바뀜)
         if data == before:
             return result
         body = json.dumps(data, ensure_ascii=False).encode()
