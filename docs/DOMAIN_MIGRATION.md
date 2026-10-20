@@ -13,7 +13,7 @@
 |---|---|
 | 현재 도메인 | `<SITE_DOMAIN>` (등록 업체: <DNS_REGISTRAR>, DNS도 <DNS_REGISTRAR>) |
 | 도메인 등록 만료 | **2026-11-24** (WHOIS `Registry Expiry Date: 2026-11-24T23:59:59Z`) |
-| 만료되면 | `https://<SITE_DOMAIN>` 접속 불가 → 웹 화면, 사진, 단축어의 "서랍에서 보기", worker의 사진 내려받기가 멈춘다 |
+| 만료되면 | `https://<SITE_DOMAIN>` 접속 불가 → 웹 화면, 사진, worker의 사진 내려받기가 멈춘다 |
 | 만료돼도 계속 되는 것 | 단축어의 저장(링크·사진 POST), API 자체(Lambda Function URL), 공유 링크(`/s/…`: 2026-10-10부터 CloudFront 기본 주소 `<CLOUDFRONT_DEFAULT_DOMAIN>`, 그 전에 보낸 것은 Function URL). 모두 도메인과 무관한 AWS 주소다 |
 | 바꾸지 않아도 되는 것 | S3 버킷 이름(`<SITE_DOMAIN>`), CloudFront 배포 자체, Lambda 함수, ECR, SSM 파라미터(AI 로그인 정보), EventBridge |
 | 권장 일정 | 11월 둘째 주까지 새 도메인으로 전환을 끝내고, 11-24 전까지 옛 도메인은 새 도메인으로 넘겨 주는(301) 상태로 둔다 |
@@ -86,7 +86,7 @@ flowchart TD
 | `cloud/INFRA.md` | 운영 기록(9곳) | 이관 결과를 새 절로 추가하고 "현재" 값을 고친다. 과거 기록은 그대로 둔다 |
 | `REQUESTS.md` | 과거 요청 기록(7곳) | 고치지 않는다(역사 기록) |
 | `docs/DOMAIN_MIGRATION.md` | 이 문서 | 완료 표시 |
-| `shortcuts/Save-to-Shelf.shortcut` (v12, 서명된 바이너리) | "서랍에서 보기"가 여는 주소 | `make_shortcut.py`로 다시 만든다 |
+| `shortcuts/Save-to-Shelf.shortcut` (v13, 서명된 바이너리) | 사이트 주소 없음(API 주소만) — v12로 되돌린 경우만 "서랍에서 보기" 주소 | v12일 때만 `make_shortcut.py --v12`로 다시 만든다 |
 
 **저장소 밖 (AWS·DNS·기기)**
 
@@ -98,7 +98,7 @@ flowchart TD
 | api Lambda 환경변수 `SITE_URL` | 사진 공개 주소 | `deploy.py`로 맞춤 |
 | api Lambda Function URL CORS `AllowOrigins` | 웹 화면 주소를 허용 목록에 둠 | 새 주소 추가(아래 5단계) |
 | <DNS_REGISTRAR> DNS | `<IAM_USER>` CNAME → CloudFront, ACM 검증용 CNAME | 옛 도메인은 만료까지 유지, 새 도메인은 새 DNS에 같은 구성 |
-| 아이폰·맥에 설치된 단축어 | v12의 "서랍에서 보기" 주소 | 새 파일로 다시 설치 |
+| 아이폰·맥에 설치된 단축어 | v12를 쓰는 기기만: "서랍에서 보기" 주소 | v13으로 다시 설치 |
 | 브라우저 쿠키 `shelf_key`·localStorage `shelf-key` | 도메인별로 따로 저장됨 | 새 도메인에서 접속 키를 한 번 입력 |
 | 아이폰 홈 화면 아이콘·즐겨찾기 | 옛 주소 | 새 주소로 다시 추가 |
 
@@ -310,8 +310,8 @@ aws lambda get-function-url-config --function-name <API_LAMBDA_NAME> --profile <
 ### 6단계. 단축어 다시 만들기 · 기기 정리
 
 ```sh
-python3 make_shortcut.py          # v12: "서랍에서 보기"가 https://NEW/#item/… 를 연다 (맥에서만, shortcuts sign 필요)
-python3 make_shortcut.py --v11    # 롤백용 v11도 같이 갱신하려면
+python3 make_shortcut.py          # v13: 알림만(사이트 주소 없음) — 다시 만들 필요는 없지만 올려도 무방 (맥에서만, shortcuts sign 필요)
+python3 make_shortcut.py --v12    # 롤백용 v12("서랍에서 보기"가 https://NEW/#item/…)도 갱신하려면
 aws s3api put-object --bucket <SITE_DOMAIN> --key shortcuts/Save-to-Shelf.shortcut \
   --body shortcuts/Save-to-Shelf.shortcut --profile <AWS_PROFILE> --region <AWS_REGION>
 ```
@@ -330,7 +330,7 @@ aws s3api put-object --bucket <SITE_DOMAIN> --key shortcuts/Save-to-Shelf.shortc
 | 잠금 화면 | 키 없는 새 창으로 `https://NEW` | 접속 키 입력 화면 |
 | 사진 주소 | 키를 넣고 사진 카드 열기 / `GET /api/items`의 사진 `url` | `https://NEW/photos/…`, 이미지 200 |
 | 메모 사진 | 사진 있는 메모(예: "추가 기능") 열기 | 사진 3장 보임 |
-| 저장 | 아이폰에서 링크 공유 → 새 단축어 | "서랍에 저장했어요" → "서랍에서 보기"가 NEW로 열림 |
+| 저장 | 아이폰에서 링크 공유 → 새 단축어 | "저장 완료" 알림 → NEW 앱을 열면 그 카드가 강조됨 |
 | 사진 정리(worker) | 사진 하나 공유 후 1~2분 | 카드가 "사진 정리 대기"에서 제목·요약으로 바뀜(worker가 `https://NEW/photos/…`를 내려받음) |
 | CORS | NEW에서 카드 수정·삭제 | 오류 없이 반영 |
 | 공유 링크 | 예전에 보낸 `/s/…` 링크 | 그대로 열림(Function URL 주소라 무관) |
@@ -367,4 +367,4 @@ aws s3api put-object --bucket <SITE_DOMAIN> --key shortcuts/Save-to-Shelf.shortc
 6. **사진 캐시**: `photos/*`는 1년 불변 캐시지만 주소(도메인)가 바뀌면 새로 받는다. 첫 화면이 잠깐 느릴 수 있다.
 7. **Cloudflare를 쓰면 DNS only**: 프록시를 켜면 CloudFront와 이중 프록시가 된다.
 8. **공개 미러**: `cloud/site.json`, 이 문서의 값은 `mirror-push.sh`가 `mirror-redact.txt` 목록으로 가린다. 새 도메인을 그 목록에 추가해야 공개 미러에 새 도메인이 나가지 않는다.
-9. **옛 도메인 만료 후**: 남이 OLD를 살 수 있다. 그 전에 모든 기기·단축어가 NEW로 바뀌었는지 확인한다(옛 단축어의 "서랍에서 보기"가 남의 사이트를 열 수 있다).
+9. **옛 도메인 만료 후**: 남이 OLD를 살 수 있다. 그 전에 모든 기기·단축어가 NEW로 바뀌었는지 확인한다(v12 단축어의 "서랍에서 보기"가 남의 사이트를 열 수 있다).

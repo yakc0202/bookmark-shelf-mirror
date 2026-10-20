@@ -10,7 +10,7 @@
 - ACM 인증서(us-east-1): `arn:aws:acm:us-east-1:<account-id>:certificate/39c1879e-0312-4562-a33a-c5faf3c18380`
 - CloudFront 배포 ID: `<CLOUDFRONT_DISTRIBUTION_ID>`, 도메인: `<CLOUDFRONT_DEFAULT_DOMAIN>`
 - DNS: `<SITE_DOMAIN>` CNAME → `<CLOUDFRONT_DEFAULT_DOMAIN>` (<DNS_REGISTRAR>에서 관리. S3 엔드포인트로 직접 연결하면 안 됨 — 아래 origin 설명 참고)
-- Origin: S3 **website** 엔드포인트(`<SITE_DOMAIN>.s3-website.<AWS_REGION>.amazonaws.com`), Origin Protocol Policy `http-only`, 캐시 정책 CachingDisabled(배포 즉시 반영되게 일부러 캐시 끔)
+- Origin: S3 **website** 엔드포인트(`<SITE_DOMAIN>.s3-website.<AWS_REGION>.amazonaws.com`), Origin Protocol Policy `http-only`, 캐시 정책 `bookmark-shelf-page-compress`(최소·기본 TTL 0이라 매번 원본 확인 → 배포 즉시 반영, gzip/br 압축 켬)
   - ⚠️ S3 **REST** 엔드포인트(`....s3.<AWS_REGION>.amazonaws.com`)를 HTTPS-only origin으로 쓰면 안 됨: 버킷명에 점이 2개(`<SITE_DOMAIN>`) 들어 있어서 AWS 와일드카드 인증서(`*.s3.<AWS_REGION>.amazonaws.com`, 레이블 1개만 매칭)와 호스트네임이 안 맞아 TLS 핸드셰이크가 실패하고 CloudFront가 502를 반환함(2026-10-03 발생·수정). website 엔드포인트는 HTTPS 자체를 지원 안 하므로 origin 구간은 http-only로 두고, 뷰어 쪽 HTTPS는 ACM 인증서가 그대로 처리.
 - `index.html` 배포 후 반영이 늦어 보이면: 캐시를 꺼놨으니 보통 즉시 반영됨. 그래도 이상하면
   `aws cloudfront create-invalidation --distribution-id <CLOUDFRONT_DISTRIBUTION_ID> --paths "/*" --profile <AWS_PROFILE> --region us-east-1`
@@ -190,3 +190,10 @@ CloudFormation을 거치지 않습니다.
 - 화면은 S3 `config.js`의 `window.SHELF_SHARE_BASE`로 공유 주소를 만든다(없으면 예전처럼 api 주소).
 - 다시 만들거나 확인: `python3 cloud/deploy_share_route.py`(이미 있으면 아무것도 안 바꿈).
 - 예전에 보낸 Function URL 주소 링크(`…lambda-url…/s/<토큰>`)도 계속 열린다. 사이트 주소(`<SITE_DOMAIN>/s/…`)로도 열린다.
+
+## 화면 파일 압축
+- 기본 동작은 전용 캐시 정책 `bookmark-shelf-page-compress`(최소·기본 TTL 0, 쿠키·헤더·쿼리 없이 gzip/br만) + Compress. `index.html`은 `Cache-Control: no-cache`라 배포는 바로 반영, 잠금 함수는 캐시보다 먼저 돌아 그대로. `photos/*`·`s/*`는 별도 정책.
+- `index.html` 약 209KB → br 약 54KB로 감.
+- 확인: 키 쿠키가 있는 브라우저 콘솔에서 `fetch('/?p='+Date.now(),{cache:'no-store'})` 응답 헤더 `content-encoding`이 `br`/`gzip`이면 됨(일반 새로고침은 브라우저 저장본을 다시 써서 크기 비교가 안 됨).
+- 스크립트: `cloud/enable_page_compression.py`(미리보기·`--apply`·`--undo`). 실행할 때만 `data/iam/cloudfront-page-compress.json`을 `<IAM_USER>` 사용자 인라인 정책으로 붙이고, 끝나면 뗀다.
+- 되돌리기: `python3 cloud/enable_page_compression.py --undo`(관리형 CachingDisabled로).
