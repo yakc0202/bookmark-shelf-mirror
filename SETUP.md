@@ -81,9 +81,11 @@ AI 발췌 작업 중인 메모는 `kind:'memo-extract'`, `status`, `instruction`
 
 | 메서드/경로 | 인증 | 동작 |
 |---|---|---|
+| GET `/api/all` | 소유자 키 | 화면 새로고침용: 북마크·메모·습관·가계부·지출 계획·일정·위시리스트를 한 번 읽어 함께(`?book=shared`면 공용 통장 가계부) |
 | GET `/api/items` | 소유자 키 | 삭제 제외 전체 북마크 |
 | POST `/api/items` | 소유자 키 | `{url}` 또는 `{text,note}` 저장 |
-| POST `/api/update` | 소유자 키 | `{id, folder/title}` 또는 `{id, note}`(재정리) |
+| POST `/api/update` | 소유자 키 | `{id, folder/title}` 또는 `{id, note}`(재정리), `{id, starred}`(별표만 바꾸면 revision 안 올림) |
+| POST `/api/ledger/save` | 소유자 키 | 지출 저장. 지출 계획에서 생긴 지출이면 계획의 금액·분류·지출일도 맞추고 응답에 `plan`을 함께 |
 | POST `/api/delete`, `/api/restore` | 소유자 키 | 소프트 삭제/복원 |
 | POST `/api/photos` | 소유자 키 | JPEG base64 사진 저장 → 저장 직후 Lambda 워커가 자동 분류 |
 | POST `/api/share`, `/api/unshare` | 소유자 키 | 공개 공유 링크 발급/종료 |
@@ -100,6 +102,9 @@ AI 발췌 작업 중인 메모는 `kind:'memo-extract'`, `status`, `instruction`
 - 식사·밥 → `맛집`, 커피·음료 → `카페`, 빵·베이커리 → `빵집`. 확인된 위치는 `도시명(업종)`/`국가명(업종)`.
 - 업무 GPT 프롬프트·생산성 팁은 `꿀팁(직장)`. AI 기술 소식은 `인공지능`.
 - 사진은 보이는 내용·글자만 해석(인물 신원·장소 추측 금지), 본문 요약과 별도로 `transcript` 필드에 사진 속 글자를 그대로 옮김.
+- X 글은 `read_x_post()`가 FxTwitter 공개 API(`api.fxtwitter.com`, 글 번호만 보냄)로 본문·인용·아티클을 읽음. 못 읽고 사용자가 적은 글도 없으면 추측 분류 없이 `needs_content`.
+- 유튜브 링크는 `youtube_oembed()`(공식 oEmbed)의 제목·채널을 우선 씀(AWS에서는 영상 페이지 대신 엉뚱한 페이지가 올 수 있음).
+- `needs_content`가 되면 api가 태그를 비움(본문 없이 추측한 태그를 남기지 않음).
 
 ## 배포
 

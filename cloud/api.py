@@ -236,7 +236,7 @@ def shared_page(data, token):
         link = ''
     else:
         title = item['title']
-        badge = '공유받은 북마크 · '+e(item['folder'])
+        badge = '공유받은 북마크 · '+e(item['folder'].split('>')[-1].strip() or item['folder'])  # 하위 폴더는 이름만
         link = '<a href="'+e(url)+'" target="_blank" rel="noreferrer noopener">원본 보기 ↗</a>'
     summary = item.get('summary') or ('' if is_collection else '아직 요약이 없습니다. 원본에서 내용을 확인하세요.')
     page = ('<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -406,6 +406,10 @@ def change(data, path, body):
         if old and old.get('plan_id'):entry['plan_id']=old['plan_id']
         if old:ledger[ledger.index(old)]=entry
         else:ledger.append(entry)
+        plan=next((p for p in data.get(PK,[]) if old and p.get('entry_id')==entry['id']),None)
+        if plan:  # 지출 계획에서 체크해 생긴 지출을 고치면 계획 금액·분류·지출일도 맞춘다
+            plan.update(amount=amount,category=entry['category'],done_date=date)
+            return {**entry,'plan':plan}
         return entry
     if path=='/api/wishlist/save':
         wish=data.setdefault('wishlist',[])
@@ -854,6 +858,7 @@ def change(data, path, body):
         if str(result.get('topic','')).strip() and not item.get('topic') and any(e.get('kind')=='link' for e in item.get('entries') or []):
             item['topic']=str(result['topic']).strip()[:30]
         item['status']=status
+        if status=='needs_content':item['tags']='[]'  # 내용이 부족하면 추측한 태그는 떼어 둔다
         item['retry_at']=now+3600 if status=='ai_waiting' else 0
         item.pop('lease',None);item.pop('lease_until',None)
         return {'message':'처리 결과를 저장했어요.'}

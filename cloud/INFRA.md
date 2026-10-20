@@ -66,6 +66,7 @@ Lambda 컨테이너로도 옮겼습니다. 맥을 안 켜놔도 자동 정리되
   (Python 3.13 베이스 + Node 22 직접 설치 + `@openai/codex`/`@anthropic-ai/claude-code` npm 설치)
 - 핸들러: `cloud/worker_handler.py` — `cloud/worker.py`와 같은 claim→organize/extract→complete
   로직이지만 무한 루프 대신 호출당 최대 20건 처리 후 종료(Lambda는 호출 단위로 과금/제한됨)
+- 외부 호출: X 글 본문은 로그인 벽 때문에 `api.fxtwitter.com`(FxEmbed, 오픈소스·비공식, 키 없음)으로 읽는다. 글 번호만 보내고 응답은 1MB·10초 제한. 이 서비스가 멈추면 X 카드는 추측 분류 없이 `needs_content`로 남고 다른 기능은 영향 없음.
 - IAM Role: `<WORKER_ROLE_NAME>` — 인라인 `ssm-auth-read`(아래 SSM 파라미터 2개만
   `ssm:GetParameters`) + `AWSLambdaBasicExecutionRole`만 가짐. S3 권한은 없음(HTTP API를 통해서만 데이터에 접근)
 - 자격증명: SSM Parameter Store SecureString 2개 — `/<WORKER_SECRET_NAME>/codex-auth`(Codex
