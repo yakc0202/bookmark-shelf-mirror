@@ -26,7 +26,7 @@ BUCKET = os.environ['DATA_BUCKET']
 # 사진 공개 주소의 기준(사이트 도메인). 없으면 예전처럼 버킷 이름을 도메인으로 쓴다. 값은 cloud/deploy.py가 cloud/site.json에서 맞춘다.
 SITE_URL = (os.environ.get('SITE_URL') or 'https://'+BUCKET).rstrip('/')
 KEY = 'data/cards.json'
-PUBLIC_FIELDS = ('id','url','title','summary','folder','tags','thumbnail','status','source','note','created','error','transcript','place_url','attachment_url','reason','topic','ends_on')
+PUBLIC_FIELDS = ('id','url','title','summary','folder','tags','thumbnail','status','source','note','created','error','transcript','place_url','attachment_url','reason','topic','ends_on','starred')
 
 class Problem(Exception):
     def __init__(self, status, message):
@@ -56,7 +56,7 @@ def arrowize(x):
     return x
 
 def transact(change):
-    for attempt in range(8):
+    for attempt in range(12):
         data, etag = read()
         before = copy.deepcopy(data)
         result = change(data)
@@ -73,7 +73,7 @@ def transact(change):
         except ClientError as e:
             if e.response['Error']['Code'] not in ('PreconditionFailed','ConditionalRequestConflict','412','409'):
                 raise
-            time.sleep(random.uniform(.02,.1) * (attempt+1))
+            time.sleep(random.uniform(.05,.15) * (attempt+1))  # 정리 작업과 동시에 저장해도 버티게
     raise Problem(409,'동시에 다른 변경이 저장됐습니다. 다시 시도해 주세요.')
 
 PAST_EVENTS='지난 행사'
@@ -866,6 +866,9 @@ def change(data, path, body):
         if item['status']=='processing':item['status']='queued'
     elif path=='/api/update':
         if item.get('deleted'):raise Problem(404,'삭제된 카드입니다.')
+        if 'starred' in body:
+            item['starred']=bool(body['starred'])
+            if set(body)<={'id','starred'}:return {'message':'반영했어요.'}  # 별표만 바꿀 땐 revision을 올리지 않음(정리 중인 AI 결과가 버려지지 않게)
         if 'attachment_url' in body:
             url=str(body['attachment_url']).strip()[:2000]
             if url and urllib.parse.urlsplit(url).scheme not in ('http','https'):raise Problem(400,'http 또는 https 링크만 추가할 수 있습니다.')
@@ -881,6 +884,9 @@ def change(data, path, body):
     item['revision']=item.get('revision',1)+1
     return {'message':'반영했어요.'}
 
+def items_of(data):
+    return sorted([visible(x) for x in data['items'] if not x.get('deleted')],key=lambda x:x['created'],reverse=True)
+
 def handler(event, context):
     try:
         path=event.get('rawPath','')
@@ -888,7 +894,7 @@ def handler(event, context):
         if method=='GET' and path.startswith('/s/'):
             data,_=read()
             return shared_page(data,path[3:])
-        allowed=('/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/split','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/schedule','/api/schedule/save','/api/schedule/delete','/api/schedule/import','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/api/wishlist','/api/wishlist/jobs','/api/wishlist/add','/api/wishlist/import','/api/wishlist/save','/api/wishlist/delete','/worker/claim','/worker/complete')
+        allowed=('/api/all','/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/split','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/schedule','/api/schedule/save','/api/schedule/delete','/api/schedule/import','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/api/wishlist','/api/wishlist/jobs','/api/wishlist/add','/api/wishlist/import','/api/wishlist/save','/api/wishlist/delete','/worker/claim','/worker/complete')
         if path not in allowed:raise Problem(404,'없는 주소입니다.')
         expected=os.environ['WORKER_TOKEN_HASH'] if path.startswith('/worker/') else os.environ['CLIENT_TOKEN_HASH']
         supplied=event.get('headers',{}).get('authorization','')
@@ -913,7 +919,13 @@ def handler(event, context):
         if method=='GET' and path=='/api/habits':
             data,_=read();return response(200,sorted(data.get('habits',[]),key=lambda h:h['created']),accept_encoding)
         if method=='GET' and path=='/api/items':
-            data,_=read();return response(200,sorted([visible(x) for x in data['items'] if not x.get('deleted')],key=lambda x:x['created'],reverse=True),accept_encoding)
+            data,_=read();return response(200,items_of(data),accept_encoding)
+        if method=='GET' and path=='/api/all':  # 화면 새로고침: 저장 파일을 한 번만 읽어 전부 돌려준다
+            lk,pk=ledger_keys(query.get('book'))
+            data,_=read()
+            return response(200,{'items':items_of(data),'memos':sorted(data.get('memos',[]),key=lambda m:m['updated'],reverse=True),
+                'habits':sorted(data.get('habits',[]),key=lambda h:h['created']),'ledger':sorted(data.get(lk,[]),key=lambda e:(e['date'],e['created']),reverse=True),
+                'plans':sorted(data.get(pk,[]),key=lambda p:p['created']),'schedule':schedule_of(data),'wishlist':sorted(data.get('wishlist',[]),key=lambda w:w['created'])},accept_encoding)
         if method!='POST':raise Problem(405,'지원하지 않는 요청입니다.')
         raw=event.get('body') or '{}'
         if event.get('isBase64Encoded'):raw=base64.b64decode(raw).decode()

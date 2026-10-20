@@ -59,3 +59,12 @@ if env.get('SITE_URL') != cfg.SITE_URL:
     print('SITE_URL 환경변수를', cfg.SITE_URL, '로 맞춤')
 else:
     print('SITE_URL 환경변수 확인:', cfg.SITE_URL)
+
+# 메모리 = CPU 몫. 256MB면 첫 요청(깨어나기)·저장 파일 읽기·압축이 느려 1024MB로 둔다(사용량은 무료 범위 안).
+MEMORY_MB = 1024
+if aws('get-function-configuration', query='MemorySize') != MEMORY_MB:
+    aws('update-function-configuration', '--memory-size', str(MEMORY_MB), query='LastUpdateStatus')
+    wait_updated()
+    print('메모리를', MEMORY_MB, 'MB로 맞춤')
+else:
+    print('메모리 확인:', MEMORY_MB, 'MB')

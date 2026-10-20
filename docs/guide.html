@@ -265,7 +265,7 @@ pre.code .m{display:inline-block;min-width:18px;height:18px;line-height:18px;tex
       <div class="tbl"><table>
         <thead><tr><th>리소스</th><th>하는 일</th><th>담기는 것</th><th>월 비용(추정)</th><th>개념</th></tr></thead>
         <tbody>
-          <tr><td>iOS·macOS 단축어<span class="sub">shortcuts/Save-to-Shelf.shortcut (v12)</span></td><td>공유 시트에서 링크·사진을 받아 api로 보낸다. 저장 뒤 "서랍에서 보기"를 띄운다.</td><td>접속 키(설치 때 입력, 파일에는 없음), api 주소</td><td>0</td><td><a class="k" data-k="k-shortcut">K-18</a></td></tr>
+          <tr><td>iOS·macOS 단축어<span class="sub">shortcuts/Save-to-Shelf.shortcut (v13)</span></td><td>공유 시트에서 링크·사진을 받아 api로 보낸다. 저장 뒤 완료 알림만 띄운다(앱을 열면 방금 저장한 카드를 강조).</td><td>접속 키(설치 때 입력, 파일에는 없음), api 주소</td><td>0</td><td><a class="k" data-k="k-shortcut">K-18</a></td></tr>
           <tr><td>DNS (<DNS_REGISTRAR>)<span class="sub">&lt;이름&gt; → <CLOUDFRONT_DEFAULT_DOMAIN></span></td><td>사이트 이름을 CloudFront 주소로 바꿔 알려 준다.</td><td>CNAME 레코드, 인증서 검증 레코드</td><td>도메인 연 1회 비용</td><td><a class="k" data-k="k-dns">K-01</a></td></tr>
           <tr><td>CloudFront 배포<span class="sub"><CLOUDFRONT_DISTRIBUTION_ID></span></td><td>HTTPS로 화면·사진을 전달한다. 사진은 1년 캐시한다.</td><td>설정만(경로별 동작 2개: 기본, photos/*)</td><td>0 (무료량 안)</td><td><a class="k" data-k="k-cdn">K-03</a></td></tr>
           <tr><td>사이트 잠금 함수<span class="sub">CloudFront Function <GATE_FUNCTION_NAME></span></td><td>쿠키의 접속 키가 맞을 때만 화면을 연다. 다른 주소로 오면 정식 주소로 넘긴다.</td><td>정식 도메인, 접속 키의 해시</td><td>0</td><td><a class="k" data-k="k-gate">K-04</a></td></tr>
@@ -522,7 +522,7 @@ async function handler(event) {
 <span class="m">5</span>      링크 = Safari 페이지 URL + 항목 속 링크 + 항목 글자
       if 링크에 http(s):// 가 있으면:
           POST {api}/api/items {"url": 링크, "note": 글자}
-<span class="m">6</span>  응답에 id 있으면 → "서랍에서 보기 / 닫기" → {SITE}/#item/{id}
+<span class="m">6</span>  응답에 id 있으면 → 저장 완료 알림
   없으면 → "저장 실패" 알림
 <span class="m">7</span>shortcuts sign --mode anyone  # 서명해야 iOS가 설치를 허락</pre>
           <ul class="anno">
@@ -531,7 +531,7 @@ async function handler(event) {
             <li><span class="m">3</span><span>사진이면 JPEG으로 줄이고 위치 정보 같은 메타데이터를 지운다.</span></li>
             <li><span class="m">4</span><span>사진 저장 요청. 8초 안에 이어서 보낸 사진은 api가 한 카드로 묶는다(최대 10장).</span></li>
             <li><span class="m">5</span><span>링크가 없는 항목(맥이 함께 넘기는 제목 등)은 건너뛴다.</span></li>
-            <li><span class="m">6</span><span>저장 성공 창. "서랍에서 보기"는 사이트의 그 카드로 가서 초록 테두리로 잠깐 표시한다. <code>SITE</code>는 <code>cloud/site.json</code>에서 온다.</span></li>
+            <li><span class="m">6</span><span>저장 완료 알림. 홈 화면 앱은 링크로 열 수 없어(iOS) 선택 창을 없앴고, 앱을 열면 화면이 마지막으로 본 뒤 15분 안에 새로 저장된 카드로 가서 잠깐 표시한다.</span></li>
             <li><span class="m">7</span><span>서명은 맥의 <code>shortcuts</code> 명령으로 한다. 그래서 단축어 재생성은 맥에서만 된다.</span></li>
           </ul>
         </div>
@@ -706,7 +706,7 @@ const CONCEPTS = [
   here:'제목·요약·폴더·태그·충분 여부·사진 글자(transcript) 등.'},
  {id:'k-shortcut',no:'K-18',t:'iOS·macOS 단축어',one:'앱 사이를 잇는 작은 자동화 프로그램.',
   li:['공유 시트에 나타나 링크·사진을 입력으로 받는다.','"URL 콘텐츠 가져오기" 동작으로 HTTP POST를 보낸다.','iOS는 서명된 단축어 파일만 설치한다.'],
-  here:'v12는 저장 뒤 "서랍에서 보기"를 띄운다. v11(알림만)은 되돌리기용으로 보관한다.'},
+  here:'v13은 저장 뒤 알림만 띄운다(앱을 열면 새 카드를 강조). v12("서랍에서 보기" 선택 창, 사파리로 열림)는 make_shortcut.py --v12로 되돌리기용.'},
  {g:'관찰·비용'},
  {id:'k-logs',no:'K-20',t:'CloudWatch 로그·지표',one:'Lambda가 남기는 실행 기록과 숫자(호출 수, 실행 시간).',
   li:['로그는 3일만 보관하도록 설정했다(비용 절약).','지표로 월 호출 수와 GB·초를 계산하면 실제 비용을 알 수 있다.'],
@@ -803,7 +803,7 @@ const SCENARIOS=[
   S('api','s3data','데이터 파일 읽기',['api가 <code>data/cards.json</code> 전체를 읽는다.','파일 지문(ETag)도 함께 받는다.','같은 주소가 이미 있으면 새로 만들지 않는다.'],'카드 551개가 든 JSON(약 1.5MB) + ETag',['k-s3','k-etag']),
   S('api','s3data','조건부로 저장',['새 카드를 넣은 파일을 <code>If-Match: 지문</code>으로 쓴다.','그사이 다른 저장이 있었다면 S3가 거절 → 다시 읽고 다시 쓴다.'],'카드가 하나 늘어난 cards.json',['k-etag']),
   S('api','worker','worker 깨우기 (비동기)',['api가 worker를 <code>Event</code> 방식으로 부른다.','접수만 확인하고 기다리지 않는다.'],'빈 내용 {}. "일감이 있다"는 신호뿐',['k-async']),
-  S('api','device','응답 → "서랍에 저장했어요"',['api가 카드 번호와 메시지를 돌려준다.','단축어가 "서랍에서 보기 / 닫기" 창을 띄운다.','여기까지 보통 1~2초. AI 정리는 뒤에서 이어진다.'],'{"id": "카드번호", "message": "저장했어요. 자동 정리합니다."}',['k-shortcut']),
+  S('api','device','응답 → "서랍에 저장했어요"',['api가 카드 번호와 메시지를 돌려준다.','단축어가 저장 완료 알림을 띄운다.','여기까지 보통 1~2초. AI 정리는 뒤에서 이어진다.'],'{"id": "카드번호", "message": "저장했어요. 자동 정리합니다."}',['k-shortcut']),
   S('worker','secrets','(처음 깨어날 때만) 로그인 정보 읽기',['worker가 콜드 스타트면 SSM Parameter Store에서 암호화된 값 2개를 풀어 꺼낸다.','Codex 로그인 파일을 <code>/tmp/.codex/auth.json</code>에 쓴다.','Claude 토큰은 환경변수에 둔다.'],'codex-auth, claude-token',['k-secrets','k-coldstart']),
   S('worker','api','POST /worker/claim',['worker가 api에 "일감 주세요"라고 한다.','워커 전용 키를 쓴다(사용자 키와 다름).'],'{} (빈 요청)',['k-lease']),
   S('api','s3data','가장 오래된 일감에 임대표',['api가 대기 카드 중 가장 오래된 것을 고른다.','status=processing, lease=무작위 표, lease_until=지금+600초로 저장한다.'],'임대표가 붙은 카드',['k-lease','k-etag']),

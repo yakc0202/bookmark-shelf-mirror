@@ -11,10 +11,10 @@ import uuid
 from pathlib import Path
 
 DEST = Path(__file__).parent / 'shortcuts'
-# 기본(v12): 저장 후 '서랍에서 보기 / 닫기' 선택 창(서랍에서 보기 → 사이트의 해당 카드로 이동) → shortcuts/Save-to-Shelf.shortcut
-# --v11: 예전처럼 저장 완료 알림만 → shortcuts/Save-to-Shelf-v11.shortcut (롤백용 보관본)
+# 기본(v13): 저장 완료 알림만(선택 창 없음) → shortcuts/Save-to-Shelf.shortcut. 방금 저장한 카드는 앱을 열면 화면이 찾아 강조한다.
+# --v12: 저장 후 '서랍에서 보기 / 닫기' 선택 창(서랍에서 보기 → 사파리로 해당 카드) → shortcuts/Save-to-Shelf-v12.shortcut (롤백용)
 import sys
-OPEN_CHOICE = '--v11' not in sys.argv
+OPEN_CHOICE = '--v12' in sys.argv
 sys.path.insert(0, str(Path(__file__).parent / 'cloud'))
 from site_config import SITE_URL as SITE  # cloud/site.json 의 site_domain
 DEST.mkdir(exist_ok=True)
@@ -111,7 +111,7 @@ actions = [
     action('is.workflow.actions.repeat.each',WFControlFlowMode=2,GroupingIdentifier=loop_id),
 ]
 workflow = {
-    'WFWorkflowName':'서랍에 저장(링크·사진 v12)' if OPEN_CHOICE else '서랍에 저장(링크·사진 v11)', 'WFWorkflowActions':actions,
+    'WFWorkflowName':'서랍에 저장(링크·사진 v12)' if OPEN_CHOICE else '서랍에 저장(링크·사진 v13)', 'WFWorkflowActions':actions,
     'WFWorkflowClientVersion':'2600', 'WFWorkflowMinimumClientVersion':900,
     'WFWorkflowMinimumClientVersionString':'900',
     'WFWorkflowIcon':{'WFWorkflowIconStartColor':4282601983, 'WFWorkflowIconGlyphNumber':59511},
@@ -128,7 +128,7 @@ import tempfile
 with tempfile.TemporaryDirectory() as tmp:
     unsigned = Path(tmp) / 'unsigned.shortcut'
     unsigned.write_bytes(plistlib.dumps(workflow, fmt=plistlib.FMT_BINARY))
-    signed_path = DEST / ('Save-to-Shelf.shortcut' if OPEN_CHOICE else 'Save-to-Shelf-v11.shortcut')
+    signed_path = DEST / ('Save-to-Shelf-v12.shortcut' if OPEN_CHOICE else 'Save-to-Shelf.shortcut')
     binary = shutil.which('shortcuts') or '/usr/bin/shortcuts'
     result = subprocess.run([binary, 'sign', '--mode', 'anyone', '--input', str(unsigned), '--output', str(signed_path)],
                              capture_output=True, text=True)

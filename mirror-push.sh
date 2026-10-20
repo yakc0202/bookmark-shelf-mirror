@@ -32,7 +32,7 @@ for line in redact.read_text().splitlines():
     if line.strip() and not line.lstrip().startswith('#') and '=>' in line:
         real, mask = (x.strip() for x in line.split('=>', 1))
         pairs.append((real, mask))
-files = [f for f in subprocess.run(['git', 'ls-files', '-z'], cwd=src, capture_output=True, check=True).stdout.decode().split('\0') if f and f not in EXCLUDE]
+files = [f for f in subprocess.run(['git', 'ls-files', '-z'], cwd=src, capture_output=True, check=True).stdout.decode().split('\0') if f and f not in EXCLUDE and not f.endswith('.shortcut')]  # 단축어는 서명 바이너리라 가릴 수 없고, 가져오면 사이트·API 주소가 보임
 keep = set(files)
 for p in list(mirror.rglob('*')):
     rel = p.relative_to(mirror)
