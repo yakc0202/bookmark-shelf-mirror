@@ -579,7 +579,7 @@ async function handler(event) {
             <li><code>processing</code> worker가 임대 중. 10분 안에 끝나지 않으면 다시 <code>queued</code>처럼 취급된다.</li>
             <li><code>ready</code> 정리 끝. 화면에 제목·요약이 보인다.</li>
             <li><code>ai_waiting</code> AI 한도·지연. 1시간 뒤 worker가 다시 가져간다(안전망 EventBridge).</li>
-            <li><code>needs_content</code> 원본에서 읽을 글이 없다. 사용자가 본문을 보태면 다시 <code>queued</code>.</li>
+            <li><code>needs_content</code> 원본에서 읽을 글이 없다. 추측한 태그는 뗀다. 사용자가 본문을 보태면 다시 <code>queued</code>. X 글은 FxTwitter 공개 API(<code>api.fxtwitter.com</code>, 글 번호만 보냄)로 읽고, 못 읽으면 추측 분류 없이 여기로 온다.</li>
           </ul>
         </div>
       </div>
@@ -654,7 +654,7 @@ const CONCEPTS = [
   here:'인증서 하나가 <code><SITE_DOMAIN></code>를 증명한다. 도메인을 바꾸면 새 인증서가 필요하다.'},
  {id:'k-cdn',no:'K-03',t:'CDN · CloudFront',one:'전 세계 가까운 지점에서 파일을 대신 전달해 주는 배달망.',
   li:['원본(오리진)은 S3다. CloudFront는 원본 앞에 선 창구다.','캐시: 한 번 가져온 파일을 지점에 보관해 다음에는 빨리 준다.','경로별로 규칙(동작)을 다르게 둘 수 있다.'],
-  here:'기본 경로는 캐시를 끄고(배포 즉시 반영), <code>photos/*</code>는 1년 캐시한다.'},
+  here:'기본 경로는 보관 시간 0(매번 원본 확인 → 배포 즉시 반영)에 gzip/br 압축을 켜고, <code>photos/*</code>는 1년 캐시한다.'},
  {id:'k-gate',no:'K-04',t:'CloudFront Function',one:'CloudFront 창구에서 요청마다 실행되는 아주 짧은 자바스크립트.',
   li:['S3에 닿기 전에 요청을 막거나 바꾸거나 다른 곳으로 넘길 수 있다.','실행 시간이 1ms 미만이어야 해서 단순한 일만 한다.'],
   here:'<code><GATE_FUNCTION_NAME></code>가 접속 키 쿠키를 확인하는 "사이트 잠금"이다.'},
@@ -833,11 +833,11 @@ const SCENARIOS=[
   S('dns','browser','CloudFront 주소 답',['DNS가 CNAME으로 CloudFront 주소를 알려 준다.'],'<CLOUDFRONT_DEFAULT_DOMAIN>',['k-dns']),
   S('browser','cf','HTTPS 요청',['브라우저가 CloudFront에 접속한다.','인증서로 진짜 사이트인지 확인한다.'],'GET / + 쿠키 shelf_key',['k-https']),
   S('cf',null,'사이트 잠금 함수',['쿠키의 접속 키 해시가 맞는지 본다.','틀리면 "접속 키 입력" 화면을 바로 돌려준다.','정식 주소가 아니면 정식 주소로 301.'],'통과 또는 입력 화면',['k-gate','k-hash']),
-  S('cf','s3web','화면 파일 가져오기',['index.html과 config.js를 S3에서 가져온다.','캐시를 꺼 두어 배포가 바로 보인다.'],'HTML·CSS·JS 한 파일 + api 주소',['k-s3']),
+  S('cf','s3web','화면 파일 가져오기',['index.html과 config.js를 S3에서 가져온다.','매번 원본을 확인해 배포가 바로 보인다.','gzip/br로 압축해 약 1/4 크기로 보낸다.'],'HTML·CSS·JS 한 파일 + api 주소',['k-s3']),
   S('cf','browser','화면 전달',['브라우저가 화면을 그린다.'],'index.html',[]),
-  S('browser','api','GET /api/items',['화면의 자바스크립트가 api를 부른다.','다른 주소라서 CORS 허락이 필요하다.','화면이 열려 있으면 1분마다 새로 부른다.'],'Bearer 접속키',['k-furl']),
+  S('browser','api','GET /api/all',['기기에 둔 마지막 데이터(IndexedDB)로 먼저 그린다.','화면의 자바스크립트가 api를 한 번 부른다(카드·메모·일정·가계부 전부).','다른 주소라서 CORS 허락이 필요하다.','화면이 열려 있으면 1분마다 새로 부른다.'],'Bearer 접속키',['k-furl']),
   S('api','s3data','데이터 읽기',['지운 카드를 빼고 보여도 되는 필드만 고른다.','사진 카드에는 사진 주소를 붙인다.'],'cards.json',['k-s3']),
-  S('api','browser','카드 목록',['gzip으로 압축해 보낸다.'],'카드 배열(JSON)',[]),
+  S('api','browser','전체 데이터',['gzip으로 압축해 보낸다.','화면은 바뀐 것만 다시 그리고 기기 저장본을 갈아 둔다.'],'카드·메모·일정·가계부(JSON)',[]),
   S('browser','cf','사진 요청',['카드의 사진을 CloudFront에서 받는다.'],'GET /photos/….jpg',['k-cdn']),
   S('cf','s3photos','사진 꺼내기(캐시)',['지점에 있으면 S3까지 가지 않는다.'],'JPEG',['k-cdn'])
  ]},

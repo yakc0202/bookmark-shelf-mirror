@@ -113,8 +113,74 @@ def naver_place_info(html, title):
               ('주소', first('roadAddress') or first('address', skip=('주소',)))]
     return '\n'.join(f'{k}: {v}' for k, v in fields if v)
 
+X_STATUS = re.compile(r'^https?://(?:www\.|mobile\.)?(?:x|twitter)\.com/[^/]+/status/(\d+)', re.I)
+
+def read_x_post(url):
+    """X 글은 로그인 벽 때문에 페이지로 못 읽어 FxTwitter 공개 API(api.fxtwitter.com, 오픈소스)로 본문을 받는다. 글 번호만 보낸다."""
+    m = X_STATUS.match(url)
+    if not m: return None
+    req = urllib.request.Request('https://api.fxtwitter.com/status/' + m[1], headers={'User-Agent': 'bookmark-shelf personal reader'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            data = json.loads(res.read(1_000_001)[:1_000_000])
+    except (OSError, ValueError):
+        return None
+    t = data.get('tweet') if isinstance(data, dict) else None
+    if not isinstance(t, dict) or not str(t.get('text') or '').strip(): return None
+    def post(x):
+        who = (x.get('author') or {}).get('name') or ''
+        media = x.get('media') or {}
+        kinds = [k for k in ('photos', 'videos') if media.get(k)]
+        alts = [a.get('altText') for a in media.get('photos') or [] if a.get('altText')]
+        return '\n'.join(v for v in [f'작성자: {who}' if who else '', str(x.get('text') or '').strip(),
+                                      ('첨부: ' + ', '.join({'photos': '사진', 'videos': '영상'}[k] for k in kinds)) if kinds else '',
+                                      ('사진 설명: ' + ' / '.join(alts)) if alts else ''] if v)
+    content = post(t)
+    a = t.get('article')
+    if isinstance(a, dict):  # X 긴 글(아티클): 제목·본문 블록
+        blocks = [str(b.get('text') or '').strip() for b in ((a.get('content') or {}).get('blocks') or []) if isinstance(b, dict)]
+        content += '\n\n아티클 제목: ' + str(a.get('title') or '') + '\n' + ('\n'.join(b for b in blocks if b) or str(a.get('preview_text') or ''))
+    if isinstance(t.get('quote'), dict): content += '\n\n인용한 글:\n' + post(t['quote'])
+    photos = [p.get('url', '') for p in (t.get('media') or {}).get('photos') or []]
+    thumb = next((u for u in photos if u.startswith('https://')), '')
+    title = str((a or {}).get('title') or '') if isinstance(a, dict) else ''
+    return (title or str(t.get('text') or '').strip())[:160], content[:22000], thumb
+
+YOUTUBE_HOSTS = ('youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be', 'music.youtube.com')
+
+def youtube_oembed(url):
+    """유튜브 공식 oEmbed로 제목·채널·썸네일만 받는다(AWS에서 영상 페이지가 막혀도 보통 응답함)."""
+    if (urllib.parse.urlsplit(url).hostname or '').lower() not in YOUTUBE_HOSTS: return None
+    req = urllib.request.Request('https://www.youtube.com/oembed?format=json&url=' + urllib.parse.quote(url, safe=''),
+                                 headers={'User-Agent': 'Mozilla/5.0 (compatible; PersonalLinkShelf/0.1)'})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            data = json.loads(res.read(200_001)[:200_000])
+    except (OSError, ValueError):
+        return None
+    title = str(data.get('title') or '').strip() if isinstance(data, dict) else ''
+    if not title: return None
+    thumb = str(data.get('thumbnail_url') or '')
+    return title[:500], f"유튜브 영상\n제목: {title}\n채널: {data.get('author_name') or ''}", thumb if thumb.startswith('https://') else ''
+
 def extract(url):
     public_url(url)
+    if X_STATUS.match(url):
+        got = read_x_post(url)
+        if got: return got
+        raise ValueError('X 글을 읽지 못했습니다.')
+    try:
+        title, content, thumb = extract_page(url)
+    except (OSError, ValueError):
+        got = youtube_oembed(url)
+        if got: return got
+        raise
+    got = youtube_oembed(url)  # 유튜브는 AWS에서 동의 화면 등 엉뚱한 페이지가 올 수 있어 공식 제목을 우선한다
+    if got:
+        return got[0], (got[1] + '\n' + content)[:22000], thumb or got[2]
+    return title, content, thumb
+
+def extract_page(url):
     naver_place = is_naver_place(url)
     req = urllib.request.Request(url, headers={'User-Agent': MOBILE_UA if naver_place else 'Mozilla/5.0 (compatible; PersonalLinkShelf/0.1)'})
     with urllib.request.build_opener(Redirect()).open(req, timeout=20) as res:
@@ -221,6 +287,8 @@ def organize(item, folders=None, persist=True, image_path=None):
                              '작성자·계정 이름·아이디 같은 사용자 정보는 topic에 넣지 말라. 카드 제목을 그대로 반복하지 말고 한 단계 넓은 주제로 쓴다.\n')
     else:
         topic_instruction = 'topic 필드는 사용하지 않으니 빈 문자열로 둔다.\n'
+    if issue and X_STATUS.match(item.get('url') or '') and not re.sub(r'https?://\S+', '', item['note'] or '').strip():
+        raise ValueError(issue)  # X 글을 못 읽었고 사용자가 적은 글도 없으면 추측해 분류하지 않고 내용 부족으로 남긴다
     if len(content.strip()) < 60 and not item['note'] and not title.strip():
         raise ValueError(issue or '읽을 수 있는 본문이 부족합니다. 카드에 본문을 추가해 주세요.')
     if folders is None:
