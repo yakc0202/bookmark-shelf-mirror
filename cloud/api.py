@@ -1,8 +1,10 @@
 """Personal S3 JSON archive API. Authenticated requests, conditional writes, worker leases."""
 import base64
+import calendar
 import copy
 import gzip
 import hashlib
+import hmac
 import html
 import json
 import logging
@@ -333,6 +335,18 @@ def ledger_keys(book):
     if book=='shared':return 'shared_ledger','shared_ledger_plans'
     raise Problem(400,'알 수 없는 가계부입니다.')
 
+def installment_shares(body):
+    # 할부: 총액을 개월 수로 나눈 회차별 금액(나머지는 첫 회차에)
+    months=body.get('months')
+    if not isinstance(months,int) or isinstance(months,bool) or not 2<=months<=60:raise Problem(400,'할부 개월 수는 2~60개월로 입력해 주세요.')
+    amount=body.get('amount')
+    if not isinstance(amount,int) or isinstance(amount,bool) or not months<=amount<=10_000_000_000:raise Problem(400,'금액을 확인해 주세요.')
+    share,rest=divmod(amount,months)
+    return [share+(rest if n==0 else 0) for n in range(months)]
+
+def budget_key(book):
+    return 'shared_ledger_budgets' if ledger_keys(book)[0]=='shared_ledger' else 'ledger_budgets'
+
 def change(data, path, body):
     now=time.time()
     if path.startswith('/api/ledger'):LK,PK=ledger_keys(body.get('book'))
@@ -388,6 +402,47 @@ def change(data, path, body):
             for b in sched['bookings']:
                 if b.get('pass_id')==old['id']:b['pass_id']=''
         return {'message':'삭제했어요.'}
+    if path=='/api/ledger/installment':  # 할부: 총액을 개월 수로 나눠 매달 같은 날의 지출로 기록(나머지는 첫 회차에)
+        date=str(body.get('date',''))
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',date):raise Problem(400,'날짜를 확인해 주세요.')
+        year,month,day=map(int,date.split('-'))
+        if not 1<=month<=12 or not 1<=day<=calendar.monthrange(year,month)[1]:raise Problem(400,'날짜를 확인해 주세요.')
+        shares=installment_shares(body);months=len(shares);inst_id=secrets.token_hex(10);entries=[]
+        for n in range(months):
+            y,m=divmod(year*12+month-1+n,12);m+=1
+            entries.append({'id':secrets.token_hex(10),'date':f'{y:04d}-{m:02d}-{min(day,calendar.monthrange(y,m)[1]):02d}','kind':'expense',
+                            'amount':shares[n],'category':str(body.get('category','')).strip()[:30] or '기타',
+                            'memo':str(body.get('memo','')).strip()[:200],'created':now,'inst_id':inst_id,'inst_no':n+1,'inst_total':months})
+        data.setdefault(LK,[]).extend(entries)
+        return entries
+    if path=='/api/ledger/plans/installment':  # 지출 계획 할부: 다음 기간들에 회차별 계획을 하나씩 만든다
+        cycle=str(body.get('cycle',''))
+        if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])',cycle):raise Problem(400,'기간을 확인해 주세요.')
+        title=str(body.get('title','')).strip()[:100]
+        if not title:raise Problem(400,'계획 이름을 입력해 주세요.')
+        shares=installment_shares(body);months=len(shares);year,month=map(int,cycle.split('-'));inst_id=secrets.token_hex(10);new=[]
+        plans=data.setdefault(PK,[])
+        if body.get('id'):  # 아직 안 쓴 기존 계획을 할부로 바꾼다
+            old=next((p for p in plans if p['id']==body['id']),None)
+            if not old:raise Problem(404,'지출 계획이 없습니다.')
+            if old.get('done') or old.get('inst_id'):raise Problem(400,'이미 쓴 계획이나 할부 계획은 할부로 바꿀 수 없어요.')
+            plans.remove(old)
+        for n in range(months):
+            y,m=divmod(year*12+month-1+n,12)
+            new.append({'id':secrets.token_hex(10),'cycle':f'{y:04d}-{m+1:02d}','title':title,'amount':shares[n],
+                        'category':str(body.get('category','')).strip()[:30] or '기타','done':False,'entry_id':'','done_date':'','created':now,
+                        'inst_id':inst_id,'inst_no':n+1,'inst_total':months})
+        plans.extend(new)
+        return new
+    if path=='/api/ledger/budget':  # 한 달 예산: 기간별 총액. 0은 예산 없음
+        cycle=str(body.get('cycle',''))
+        if not re.fullmatch(r'\d{4}-\d{2}',cycle):raise Problem(400,'기간을 확인해 주세요.')
+        amount=body.get('amount')
+        if not isinstance(amount,int) or isinstance(amount,bool) or not 0<=amount<=10_000_000_000:
+            raise Problem(400,'금액을 확인해 주세요.')
+        budgets=data.setdefault(budget_key(body.get('book')),{})
+        budgets[cycle]=amount
+        return budgets
     if path=='/api/ledger/save':
         ledger=data.setdefault(LK,[])
         entry_id=body.get('id')
@@ -404,6 +459,7 @@ def change(data, path, body):
                'category':str(body.get('category','')).strip()[:30] or '기타','memo':str(body.get('memo','')).strip()[:200],
                'created':old['created'] if old else now}
         if old and old.get('plan_id'):entry['plan_id']=old['plan_id']
+        if old and old.get('inst_id'):entry.update(inst_id=old['inst_id'],inst_no=old['inst_no'],inst_total=old['inst_total'])  # 할부는 이 회차만 고친다
         if old:ledger[ledger.index(old)]=entry
         else:ledger.append(entry)
         plan=next((p for p in data.get(PK,[]) if old and p.get('entry_id')==entry['id']),None)
@@ -461,6 +517,7 @@ def change(data, path, body):
         old=next((e for e in ledger if e['id']==body.get('id')),None)
         if not old:raise Problem(404,'가계부 내역이 없습니다.')
         ledger.remove(old)
+        if old.get('inst_id'):ledger[:]=[e for e in ledger if e.get('inst_id')!=old['inst_id']]  # 할부는 회차 전체를 지운다
         for plan in data.get(PK,[]):
             if plan.get('entry_id')==old['id']:plan.update(done=False,entry_id='',done_date='')
         return {'message':'삭제했어요.'}
@@ -480,6 +537,7 @@ def change(data, path, body):
               'category':str(body.get('category','')).strip()[:30] or '기타',
               'done':old['done'] if old else False,'entry_id':old.get('entry_id','') if old else '',
               'done_date':old.get('done_date','') if old else '','created':old['created'] if old else now}
+        if old and old.get('inst_id'):plan.update(inst_id=old['inst_id'],inst_no=old['inst_no'],inst_total=old['inst_total'])  # 할부는 이 회차만 고친다
         if old:plans[plans.index(old)]=plan
         else:plans.append(plan)
         entry=next((e for e in data.get(LK,[]) if plan['entry_id'] and e['id']==plan['entry_id']),None)
@@ -492,6 +550,7 @@ def change(data, path, body):
         old=next((p for p in plans if p['id']==body.get('id')),None)
         if not old:raise Problem(404,'지출 계획이 없습니다.')
         plans.remove(old)
+        if old.get('inst_id'):plans[:]=[p for p in plans if p.get('inst_id')!=old['inst_id']]  # 할부는 회차 전체를 지운다(기록된 지출은 남김)
         return {'message':'삭제했어요.'}
     if path=='/api/ledger/plans/check':
         plans=data.setdefault(PK,[]);ledger=data.setdefault(LK,[])
@@ -730,7 +789,9 @@ def change(data, path, body):
             if len(entries)<50:
                 host=urllib.parse.urlsplit(item['url']).hostname or item['url']
                 thumb,title=fetch_link_preview(item['url'])
-                entries.append({'kind':'link','url':item['url'],'title':title or host,**({'thumbnail':thumb} if thumb else {})})
+                # 도착 시각(added·first_created)은 타래가 갈라졌을 때 공유 간격을 확인하려고 남긴다
+                candidate.setdefault('first_created',candidate['created'])
+                entries.append({'kind':'link','url':item['url'],'title':title or host,'added':now,**({'thumbnail':thumb} if thumb else {})})
                 candidate['created']=now
                 # 글이 붙으면 제목·요약을 다시 정리한다(정리 중이었다면 워커의 이전 결과는 수정 번호가 달라 거절됨)
                 requeue(candidate)
@@ -892,6 +953,35 @@ def change(data, path, body):
 def items_of(data):
     return sorted([visible(x) for x in data['items'] if not x.get('deleted')],key=lambda x:x['created'],reverse=True)
 
+def session_sign(exp):
+    return hmac.new(os.environ['SESSION_SECRET'].encode(),f's1.{exp}'.encode(),'sha256').hexdigest()
+
+def session_valid(token):
+    """로그인 때 발급한 입장권인지 본다. 같은 검사를 cloud/site-gate.js도 한다."""
+    m=re.fullmatch(r's1\.(\d+)\.([0-9a-f]{64})',token)
+    return bool(m and os.environ.get('SESSION_SECRET') and int(m[1])>time.time() and secrets.compare_digest(m[2],session_sign(m[1])))
+
+def password_ok(password):
+    _,rounds,salt,expected=os.environ['PASSWORD_HASH'].split('$')
+    return secrets.compare_digest(hashlib.pbkdf2_hmac('sha256',password.encode(),bytes.fromhex(salt),int(rounds)).hex(),expected)
+
+def login(body):
+    """비밀번호를 확인하고 입장권을 준다. 5번 틀리면 1분부터 최대 15분까지 기다리게 한다(서랍 전체 기준)."""
+    if not os.environ.get('PASSWORD_HASH') or not os.environ.get('SESSION_SECRET'):raise Problem(503,'비밀번호가 아직 설정되지 않았습니다.')
+    data,_=read();guard=data.get('login_guard') or {};now=time.time()
+    if guard.get('until',0)>now:raise Problem(429,f"여러 번 틀렸어요. {int((guard['until']-now)//60)+1}분 뒤에 다시 시도해 주세요.")
+    password=body.get('password')
+    if not isinstance(password,str) or not 0<len(password)<=200 or not password_ok(password):
+        def fail(d):
+            g=d.get('login_guard') or {};g['fails']=g.get('fails',0)+1
+            if g['fails']>=5:g['until']=now+min(900,60*2**(g['fails']-5))
+            d['login_guard']=g
+        transact(fail)
+        raise Problem(401,'비밀번호가 맞지 않아요.')
+    if guard:transact(lambda d:d.pop('login_guard',None))
+    exp=int(now)+365*86400
+    return {'token':f's1.{exp}.{session_sign(exp)}'}
+
 def handler(event, context):
     try:
         path=event.get('rawPath','')
@@ -899,12 +989,21 @@ def handler(event, context):
         if method=='GET' and path.startswith('/s/'):
             data,_=read()
             return shared_page(data,path[3:])
-        allowed=('/api/all','/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/split','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/schedule','/api/schedule/save','/api/schedule/delete','/api/schedule/import','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/api/wishlist','/api/wishlist/jobs','/api/wishlist/add','/api/wishlist/import','/api/wishlist/save','/api/wishlist/delete','/worker/claim','/worker/complete')
+        allowed=('/api/login','/api/all','/api/memos','/api/memos/save','/api/memos/delete','/api/memos/extract','/api/memos/summarize','/api/memos/photo','/api/photos','/api/attach-photo','/api/share','/api/unshare','/api/items','/api/update','/api/delete','/api/restore','/api/collections','/api/collections/entries','/api/collections/entries/remove','/api/collections/move','/api/collections/unmove','/api/items/to-collection','/api/items/split','/api/items/merge-photos','/api/habits','/api/habits/save','/api/habits/delete','/api/habits/stamp','/api/schedule','/api/schedule/save','/api/schedule/delete','/api/schedule/import','/api/ledger','/api/ledger/save','/api/ledger/delete','/api/ledger/plans','/api/ledger/plans/save','/api/ledger/plans/delete','/api/ledger/plans/check','/api/ledger/budget','/api/ledger/installment','/api/ledger/plans/installment','/api/wishlist','/api/wishlist/jobs','/api/wishlist/add','/api/wishlist/import','/api/wishlist/save','/api/wishlist/delete','/worker/claim','/worker/complete')
         if path not in allowed:raise Problem(404,'없는 주소입니다.')
+        if path=='/api/login':
+            if method!='POST':raise Problem(405,'지원하지 않는 요청입니다.')
+            raw=event.get('body') or '{}'
+            if event.get('isBase64Encoded'):raw=base64.b64decode(raw).decode()
+            if len(raw.encode())>2000:raise Problem(413,'요청이 너무 큽니다.')
+            body=json.loads(raw)
+            if not isinstance(body,dict):raise Problem(400,'JSON 객체가 필요합니다.')
+            return response(200,login(body))
         expected=os.environ['WORKER_TOKEN_HASH'] if path.startswith('/worker/') else os.environ['CLIENT_TOKEN_HASH']
         supplied=event.get('headers',{}).get('authorization','')
-        if not supplied.startswith('Bearer ') or not secrets.compare_digest(hashlib.sha256(supplied[7:].encode()).hexdigest(),expected):
-            raise Problem(401,'접속 키를 확인하세요.')
+        # 웹은 입장권, 단축어는 접속 키. 정리 작업(/worker/)은 자기 키만 받는다.
+        if not supplied.startswith('Bearer ') or not (secrets.compare_digest(hashlib.sha256(supplied[7:].encode()).hexdigest(),expected) or (not path.startswith('/worker/') and session_valid(supplied[7:]))):
+            raise Problem(401,'다시 로그인해 주세요(단축어는 접속 키를 확인하세요).')
         accept_encoding=event.get('headers',{}).get('accept-encoding','')
         if method=='GET' and path=='/api/memos':
             data,_=read();return response(200,sorted(data.get('memos',[]),key=lambda m:m['updated'],reverse=True),accept_encoding)
@@ -930,7 +1029,7 @@ def handler(event, context):
             data,_=read()
             return response(200,{'items':items_of(data),'memos':sorted(data.get('memos',[]),key=lambda m:m['updated'],reverse=True),
                 'habits':sorted(data.get('habits',[]),key=lambda h:h['created']),'ledger':sorted(data.get(lk,[]),key=lambda e:(e['date'],e['created']),reverse=True),
-                'plans':sorted(data.get(pk,[]),key=lambda p:p['created']),'schedule':schedule_of(data),'wishlist':sorted(data.get('wishlist',[]),key=lambda w:w['created'])},accept_encoding)
+                'plans':sorted(data.get(pk,[]),key=lambda p:p['created']),'budgets':data.get(budget_key(query.get('book')),{}),'schedule':schedule_of(data),'wishlist':sorted(data.get('wishlist',[]),key=lambda w:w['created'])},accept_encoding)
         if method!='POST':raise Problem(405,'지원하지 않는 요청입니다.')
         raw=event.get('body') or '{}'
         if event.get('isBase64Encoded'):raw=base64.b64decode(raw).decode()

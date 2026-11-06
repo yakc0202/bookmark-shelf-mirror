@@ -20,6 +20,6 @@ class StarAndAll(unittest.TestCase):
   body=r['body']
   if r.get('isBase64Encoded'):body=gzip.decompress(base64.b64decode(body)).decode()
   out=json.loads(body)
-  self.assertEqual(set(out),{'items','memos','habits','ledger','plans','schedule','wishlist'})
+  self.assertEqual(set(out),{'items','memos','habits','ledger','plans','budgets','schedule','wishlist'})
   self.assertEqual(out['items'][0]['id'],'one');self.assertEqual(len(reads),1)
 if __name__=='__main__':unittest.main()

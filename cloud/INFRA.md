@@ -54,7 +54,7 @@ CloudFront로 영구 캐싱하는 쪽으로 바꿈.
 - Lambda 함수: `<API_LAMBDA_NAME>` (<AWS_REGION>, python3.13, handler `index.handler`)
 - Function URL: `https://<API_FUNCTION_URL_ID>.lambda-url.<AWS_REGION>.on.aws`
 - IAM Role: `<API_STACK_NAME>-ApiRole-*` (정확한 이름은 `aws lambda get-function --function-name <API_LAMBDA_NAME> --query Configuration.Role`로 확인)
-- 환경변수: `DATA_BUCKET=<SITE_DOMAIN>`, `CLIENT_TOKEN_HASH`, `WORKER_TOKEN_HASH` (평소엔 안 바뀜)
+- 환경변수: `DATA_BUCKET=<SITE_DOMAIN>`, `CLIENT_TOKEN_HASH`(단축어 접속 키), `WORKER_TOKEN_HASH`, `PASSWORD_HASH`(웹 비밀번호 PBKDF2), `SESSION_SECRET`(입장권 서명) (평소엔 안 바뀜)
 
 ## 서버리스 worker (2026-10-03 추가, 맥 로컬 워커 대체)
 
@@ -149,22 +149,24 @@ CloudFormation을 거치지 않습니다.
 ## 사이트 잠금 (CloudFront Function, 2026-10-07)
 
 - 함수 `<GATE_FUNCTION_NAME>`(cloudfront-js-2.0), 기본 동작(`photos/*` 제외) viewer-request에 연결. 코드 `cloud/site-gate.js`.
-- `shelf_key` 쿠키의 SHA-256이 API Lambda의 `CLIENT_TOKEN_HASH`와 같을 때만 통과. 아니면 접속 키 입력 화면(200)을 직접 응답.
+- `shelf_key` 쿠키의 입장권(`s1.<만료 시각>.<HMAC>`)이 API Lambda의 `SESSION_SECRET`으로 검증되고 만료 전일 때만 통과. 아니면 비밀번호 입력 화면(200)을 직접 응답. 화면은 `/api/login`으로 비밀번호를 보내 입장권을 받는다.
 - 공개 경로: `/apple-touch-icon.png`, `/apple-touch-icon-precomposed.png`, `/favicon.ico`, `/shortcuts/*`. `photos/*`는 별도 동작이라 함수 영향 없음.
 - `<SITE_DOMAIN>`가 아닌 호스트(cloudfront.net 기본 주소 등)는 301로 이동.
-- 배포: `python3 cloud/deploy_gate.py` — 가짜 키로 TestFunction 시험 후 실제 해시로 발행·연결. 해시는 저장소에 넣지 않음.
-- **접속 키를 바꾸면** API Lambda의 `CLIENT_TOKEN_HASH`를 바꾼 뒤 이 스크립트를 다시 실행해야 함(안 하면 새 키로 사이트가 안 열림).
+- 배포: `python3 cloud/deploy_gate.py` — 가짜 비밀값으로 TestFunction 시험 후 실제 `SESSION_SECRET`으로 발행·연결. 비밀값은 저장소에 넣지 않음. 비밀번호가 설정돼 있지 않으면 발행을 거부함.
+- 비밀번호 설정·변경: `python3 cloud/set_password.py`(터미널에서 직접 입력, 원문 저장 안 함). 기존 입장권은 유지됨. `--logout-all`은 `SESSION_SECRET`도 새로 만들어 잠금 함수까지 다시 발행(전 기기 로그아웃, 함수 권한 필요).
+- 단축어 접속 키(`CLIENT_TOKEN_HASH`)는 잠금 함수와 무관해짐: 바꿔도 함수를 다시 발행할 필요 없음. 웹 사이트를 여는 데는 쓰이지 않음.
+- 로그인 실패 횟수: `cards.json`의 `login_guard`. 5번 틀리면 1분부터 최대 15분까지 대기(서랍 전체 기준), 성공하면 지움.
 - 되돌리기: CloudFront 콘솔 → 배포 → 동작 → 기본값 → 함수 연결 viewer-request를 "연결 없음"으로.
-- 쿠키 `shelf_key`: 1년 유지(Secure, SameSite=Lax). 앱(`static/index.html`의 `syncKeyCookie`)이 시작·로그인 때 갱신하고, 입력 화면은 기기에 저장된 키(localStorage `shelf-key`)로 자동 재진입.
-- 함수 관리 권한은 상시 권한이 아님. 키를 바꿀 때 `<IAM_USER>` 사용자에 CloudFront Function 권한(Create/Update/Publish/Describe/Get/TestFunction)을 잠깐 붙이고 스크립트 실행.
+- 쿠키 `shelf_key`: 1년 유지(Secure, SameSite=Lax). 값은 입장권. 앱(`static/index.html`의 `syncKeyCookie`)이 시작·로그인 때 갱신하고, 입력 화면은 기기에 저장된 입장권(localStorage `shelf-key`)으로 자동 재진입. 예전 접속 키가 남아 있으면 지운다.
+- 함수 관리 권한은 상시 권한이 아님. 함수를 발행할 때 `<IAM_USER>` 사용자에 CloudFront Function 권한(Create/Update/Publish/Describe/Get/TestFunction)을 잠깐 붙이고 스크립트 실행.
 
 ## 버킷 공개 파일과 아이콘 (2026-10-07 기준)
 
 - 버킷 정책상 누구나 읽을 수 있는 파일: `index.html`, `config.js`, `shortcuts/Save-to-Shelf.shortcut`, `apple-touch-icon.png`, `apple-touch-icon-precomposed.png`, `favicon.ico`. 그 외 루트 경로는 403(`data/` 포함). 새 파일을 공개하려면 버킷 정책 수정 필요(`<IAM_USER>` 사용자에는 상시 권한 없음).
-- 사이트 잠금 이후 `index.html`, `config.js`는 키 쿠키가 있어야 열림. 위 공개 파일 중 아이콘 3종·단축어만 키 없이 열림.
+- 사이트 잠금 이후 `index.html`, `config.js`는 입장권 쿠키가 있어야 열림. 위 공개 파일 중 아이콘 3종·단축어만 입장권 없이 열림.
 - `photos/*`는 버킷 정책이 아니라 CloudFront OAC로만 공개 → 새 공개 이미지가 필요하면 `photos/` 아래에 올리면 권한 없이 됨.
 - 탭 파비콘: `photos/site-favicon-v1.png`(투명 배경 128px). `photos/`는 1년 불변 캐시라 아이콘을 바꿀 땐 같은 이름에 덮어쓰지 말고 `v2`처럼 새 이름으로 올린 뒤 `index.html`과 `cloud/site-gate.js`의 링크를 함께 바꿀 것.
-- 홈 화면 앱 설정(manifest): `photos/app-manifest-v1.webmanifest`(원본 `static/app-manifest.webmanifest`). 기본 경로에 두면 잠금 함수·버킷 정책 때문에 키 없이 못 읽어서 `photos/`에 둠. 바꿀 땐 새 이름(`v2`)으로 올리고 `index.html` 링크를 함께 바꿀 것.
+- 홈 화면 앱 설정(manifest): `photos/app-manifest-v1.webmanifest`(원본 `static/app-manifest.webmanifest`). 기본 경로에 두면 잠금 함수·버킷 정책 때문에 키 없이 못 읽어서 `photos/`에 둠. 바꿀 땐 다음 번호(`v3`, `v2`는 이미 썼음)로 올리고 `index.html` 링크를 함께 바꿀 것.
 - 홈 화면·즐겨찾기 아이콘: `apple-touch-icon.png`(180px, 미색 배경 — iOS가 투명 배경을 검게 칠하므로 배경 유지).
 
 ## worker 코드 배포 (Docker 없이, 2026-10-07)

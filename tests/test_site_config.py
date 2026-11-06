@@ -19,7 +19,7 @@ class SiteConfig(unittest.TestCase):
  def test_gate_template_has_placeholders(self):
   code=(ROOT/'cloud/site-gate.js').read_text()
   self.assertIn("const HOST = '__SITE_DOMAIN__';",code)
-  self.assertIn('__CLIENT_TOKEN_HASH__',code)
+  self.assertIn('__SESSION_SECRET__',code);self.assertIn('__API_BASE__',code)
 
 class RelinkMemoPhotos(unittest.TestCase):
  def test_absolute_photo_links_become_relative(self):

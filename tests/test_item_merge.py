@@ -15,7 +15,16 @@ class ItemMerge(unittest.TestCase):
   self.assertEqual(len(self.data['items']),1)
   item=self.data['items'][0]
   self.assertEqual(out['id'],item['id'])
-  self.assertEqual(item['entries'],[{'kind':'link','url':'https://a.test/thread/two','title':'a.test'}])
+  self.assertEqual(item['entries'],[{'kind':'link','url':'https://a.test/thread/two','title':'a.test','added':item['created']}])
+ def test_merge_records_arrival_times(self):
+  self.post('https://a.test/thread/one')
+  first=self.data['items'][0]['created']
+  self.post('https://a.test/thread/two');self.post('https://a.test/thread/three')
+  item=self.data['items'][0]
+  self.assertEqual(item['first_created'],first)
+  added=[e['added'] for e in item['entries']]
+  self.assertEqual(added,sorted(added));self.assertEqual(added[-1],item['created'])
+  self.assertNotIn('added',json.dumps(api.visible(item)))
  def test_merge_into_card_being_processed_requeues_it(self):
   self.post('https://a.test/thread/one')
   first=api.change(self.data,'/worker/claim',{})['item']

@@ -31,6 +31,84 @@ class Ledger(unittest.TestCase):
   self.assertEqual(self.data['ledger'],[])
   with self.assertRaises(api.Problem):api.change(self.data,'/api/ledger/delete',{'id':e['id']})
 
+class LedgerInstallment(unittest.TestCase):
+ def setUp(self):self.data={}
+ def add(self,**kw):
+  body={'date':'2026-11-30','amount':100000,'months':3,'category':'가전','memo':'청소기'};body.update(kw)
+  return api.change(self.data,'/api/ledger/installment',body)
+ def test_splits_by_month(self):
+  out=self.add()
+  self.assertEqual([e['amount'] for e in out],[33334,33333,33333])
+  self.assertEqual([e['date'] for e in out],['2026-11-30','2026-12-30','2027-01-30'])
+  self.assertEqual([(e['inst_no'],e['inst_total']) for e in out],[(1,3),(2,3),(3,3)])
+  self.assertEqual(self.data['ledger'],out)
+ def test_clamps_to_month_end(self):
+  self.assertEqual(self.add(date='2027-01-31')[1]['date'],'2027-02-28')
+ def test_rejects_bad_input(self):
+  for bad in ({'months':1},{'months':61},{'months':'3'},{'months':True},{'amount':2},{'date':'2026-13-01'},{'date':'2026-02-30'},{'book':'x'}):
+   with self.subTest(bad=bad),self.assertRaises(api.Problem):self.add(**bad)
+ def test_edit_changes_one_and_keeps_link(self):
+  out=self.add();e=out[1]
+  u=api.change(self.data,'/api/ledger/save',{'id':e['id'],'date':e['date'],'amount':5000,'category':'가전'})
+  self.assertEqual((u['amount'],u['inst_id'],u['inst_no'],u['inst_total']),(5000,e['inst_id'],2,3))
+  self.assertEqual(self.data['ledger'][0]['amount'],33334)
+ def test_delete_removes_whole_installment_only(self):
+  other=api.change(self.data,'/api/ledger/save',{'date':'2026-11-30','amount':1000,'category':'식비'})
+  out=self.add()
+  api.change(self.data,'/api/ledger/delete',{'id':out[1]['id']})
+  self.assertEqual(self.data['ledger'],[other])
+ def test_shared_book_is_separate(self):
+  self.add(book='shared')
+  self.assertEqual(len(self.data['shared_ledger']),3);self.assertNotIn('ledger',self.data)
+
+class LedgerPlanInstallment(unittest.TestCase):
+ def setUp(self):self.data={}
+ def add(self,**kw):
+  body={'cycle':'2026-11','title':'노트북','amount':100000,'months':3,'category':'가전'};body.update(kw)
+  return api.change(self.data,'/api/ledger/plans/installment',body)
+ def test_one_plan_per_cycle(self):
+  out=self.add()
+  self.assertEqual([p['cycle'] for p in out],['2026-11','2026-12','2027-01'])
+  self.assertEqual([p['amount'] for p in out],[33334,33333,33333])
+  self.assertEqual([(p['inst_no'],p['inst_total'],p['done']) for p in out],[(1,3,False),(2,3,False),(3,3,False)])
+ def test_rejects_bad_input(self):
+  for bad in ({'months':1},{'months':61},{'amount':2},{'cycle':'2026-13'},{'title':' '},{'book':'x'}):
+   with self.subTest(bad=bad),self.assertRaises(api.Problem):self.add(**bad)
+ def test_edit_changes_one_and_keeps_link(self):
+  p=self.add()[1]
+  u=api.change(self.data,'/api/ledger/plans/save',{'id':p['id'],'cycle':p['cycle'],'title':'노트북','amount':5000})
+  self.assertEqual((u['amount'],u['inst_id'],u['inst_no']),(5000,p['inst_id'],2))
+  self.assertEqual(self.data['ledger_plans'][0]['amount'],33334)
+ def test_converts_existing_plan(self):
+  p=api.change(self.data,'/api/ledger/plans/save',{'cycle':'2026-11','title':'노트북','amount':100000})
+  out=self.add(id=p['id'])
+  self.assertEqual(self.data['ledger_plans'],out)
+  api.change(self.data,'/api/ledger/plans/check',{'id':out[0]['id'],'checked':True,'date':'2026-11-07'})
+  with self.assertRaises(api.Problem):self.add(id=out[0]['id'])
+  with self.assertRaises(api.Problem):self.add(id='nope')
+ def test_check_records_only_that_month(self):
+  p=self.add()[0]
+  api.change(self.data,'/api/ledger/plans/check',{'id':p['id'],'checked':True,'date':'2026-11-07'})
+  self.assertEqual([e['amount'] for e in self.data['ledger']],[33334])
+ def test_delete_removes_plans_keeps_recorded_expense(self):
+  p=self.add()[0]
+  api.change(self.data,'/api/ledger/plans/check',{'id':p['id'],'checked':True,'date':'2026-11-07'})
+  api.change(self.data,'/api/ledger/plans/delete',{'id':p['id']})
+  self.assertEqual(self.data['ledger_plans'],[]);self.assertEqual(len(self.data['ledger']),1)
+
+class LedgerBudget(unittest.TestCase):
+ def setUp(self):self.data={}
+ def test_saves_per_cycle_and_book(self):
+  api.change(self.data,'/api/ledger/budget',{'cycle':'2026-10','amount':1500000})
+  out=api.change(self.data,'/api/ledger/budget',{'cycle':'2026-11','amount':0})
+  self.assertEqual(out,{'2026-10':1500000,'2026-11':0})
+  api.change(self.data,'/api/ledger/budget',{'cycle':'2026-10','amount':300000,'book':'shared'})
+  self.assertEqual(self.data['shared_ledger_budgets'],{'2026-10':300000})
+  self.assertEqual(self.data['ledger_budgets']['2026-10'],1500000)
+ def test_rejects_bad_input(self):
+  for bad in ({'cycle':'2026-10-05','amount':1},{'cycle':'2026-10','amount':-1},{'cycle':'2026-10','amount':'1'},{'cycle':'2026-10','amount':True},{'cycle':'2026-10','amount':1,'book':'x'}):
+   with self.subTest(bad=bad),self.assertRaises(api.Problem):api.change(self.data,'/api/ledger/budget',bad)
+
 class LedgerPlans(unittest.TestCase):
  def setUp(self):self.data={}
  def plan(self,**kw):

@@ -13,9 +13,9 @@ Route53·EC2·API Gateway 없이 **S3 + CloudFront(HTTPS) + Lambda Function URL 
 ```mermaid
 flowchart LR
  I[아이폰 공유 단축어] -->|HTTPS + 접속 키| L[Lambda Function URL: api]
- U[브라우저] -->|HTTPS + 접속 키| F[CloudFront]
+ U[브라우저] -->|HTTPS + 입장권| F[CloudFront]
  F -->|HTTP, origin only| W[S3 웹 화면]
- F -.->|HTTPS + 접속 키| L
+ F -.->|HTTPS + 입장권| L
  L -->|조건부 JSON 읽기/쓰기| D[(S3 data/cards.json, 비공개)]
  L -.->|저장 직후 비동기 invoke| K[Lambda 컨테이너: worker]
  E[EventBridge 1시간마다] -.->|안전망 invoke| K
@@ -35,7 +35,8 @@ flowchart LR
 | S3 버킷명 | 웹·데이터를 함께 저장할 버킷 이름. 커스텀 도메인 CNAME과 버킷명이 같아야 S3 웹 엔드포인트 연결이 됨 | 최초 리소스 생성 시 로컬에서만 치환 (`cloud/INFRA.md` 참고) |
 | 서비스 도메인 | 최종 접속 도메인(DNS CNAME 대상, CloudFront 배포 도메인으로 연결) | DNS 설정, `data/cloud-build/outputs.json` |
 | CloudFormation 스택 이름 | 자유롭게 지정 | 배포 명령 인자 |
-| 소유자 접속 키 | 앱 로그인용 비밀 키 | `data/token` (버전 관리 제외) |
+| 웹 비밀번호 | 웹 로그인용. 원문은 저장하지 않고 PBKDF2 해시와 입장권 서명 비밀값만 보관 | API Lambda 환경변수 `PASSWORD_HASH`, `SESSION_SECRET` (`cloud/set_password.py`로 설정) |
+| 소유자 접속 키 | 단축어용 비밀 키 | `data/token` (버전 관리 제외) |
 | 워커 접속 키 | 로컬 워커(현재 중지, 검증용으로만 사용) 전용 키. Lambda 워커는 별도로 SSM Parameter Store에 자격증명 보관(`cloud/worker_auth.py`)(`cloud/INFRA.md` 참고) | `data/cloud-worker-token`, `data/cloud-worker.json` (버전 관리 제외) |
 
 사이트 도메인·버킷명·AWS 프로필·리전·리소스 이름은 `cloud/site.json` 한 곳에 있고, 배포·운영 스크립트는 `cloud/site_config.py`로 이 값을 읽습니다.
@@ -70,6 +71,7 @@ DNS는 서비스 도메인을 CloudFront 배포 도메인으로 CNAME 연결합�
 북마크 필드: `id`(URL SHA-256 앞 20자리), `url`, `title`, `summary`, `folder`, `tags`(JSON 문자열), `thumbnail`,
 `status`, `source`, `note`, `created`, `error`, `revision`, `deleted`, 사진이면 `kind:'photo'`·`image_key`·`transcript`(사진 속 글자 OCR).
 처리 중에는 `lease`/`lease_until`, 재시도는 `retry_at`이 추가됩니다.
+이어지는 글이 붙으면 `entries`의 각 링크에 도착 시각 `added`가, 카드에 첫 저장 시각 `first_created`가 남습니다(`created`는 마지막으로 붙은 시각, 화면에는 안 보냄).
 
 메모 필드: `id`, `title`, `content`, `folder`, `bookmark_ids`, `created`, `updated`, `revision`.
 AI 발췌 작업 중인 메모는 `kind:'memo-extract'`, `status`, `instruction`, `source_snapshot`, `source_memo_id`가 임시로 붙습니다.
@@ -81,11 +83,14 @@ AI 발췌 작업 중인 메모는 `kind:'memo-extract'`, `status`, `instruction`
 
 | 메서드/경로 | 인증 | 동작 |
 |---|---|---|
-| GET `/api/all` | 소유자 키 | 화면 새로고침용: 북마크·메모·습관·가계부·지출 계획·일정·위시리스트를 한 번 읽어 함께(`?book=shared`면 공용 통장 가계부) |
+| GET `/api/all` | 소유자 키 | 화면 새로고침용: 북마크·메모·습관·가계부·지출 계획·한 달 예산(`budgets`)·일정·위시리스트를 한 번 읽어 함께(`?book=shared`면 공용 통장 가계부) |
 | GET `/api/items` | 소유자 키 | 삭제 제외 전체 북마크 |
 | POST `/api/items` | 소유자 키 | `{url}` 또는 `{text,note}` 저장 |
 | POST `/api/update` | 소유자 키 | `{id, folder/title}` 또는 `{id, note}`(재정리), `{id, starred}`(별표만 바꾸면 revision 안 올림) |
 | POST `/api/ledger/save` | 소유자 키 | 지출 저장. 지출 계획에서 생긴 지출이면 계획의 금액·분류·지출일도 맞추고 응답에 `plan`을 함께 |
+| POST `/api/ledger/installment` | 소유자 키 | `{date, amount(총액), months(2~60), category, memo, book?}` 매달 같은 날(없으면 말일) 지출로 나눠 저장, 나머지는 첫 회차에. 각 지출에 `inst_id`·`inst_no`·`inst_total`. `/api/ledger/save`는 그 회차만 고치고 `/api/ledger/delete`는 같은 할부 전체를 지움 |
+| POST `/api/ledger/plans/installment` | 소유자 키 | `{cycle, title, amount(총액), months(2~60), category, book?}` 다음 기간들에 회차별 계획을 하나씩 저장. `id`를 주면 아직 안 쓴 기존 계획을 할부로 바꿈. `plans/save`는 그 회차만 고치고 `plans/delete`는 같은 할부 계획 전체를 지움(기록된 지출은 남음) |
+| POST `/api/ledger/budget` | 소유자 키 | `{cycle:'YYYY-MM', amount, book?}` 그 기간의 한 달 예산(`ledger_budgets`·`shared_ledger_budgets`에 기간별 저장, 0은 예산 없음, 다음 기간으로 이어지지 않음) |
 | POST `/api/delete`, `/api/restore` | 소유자 키 | 소프트 삭제/복원 |
 | POST `/api/photos` | 소유자 키 | JPEG base64 사진 저장 → 저장 직후 Lambda 워커가 자동 분류 |
 | POST `/api/share`, `/api/unshare` | 소유자 키 | 공개 공유 링크 발급/종료 |

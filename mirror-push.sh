@@ -47,9 +47,10 @@ generic = [
     r'\b[a-z0-9]{13,14}\.cloudfront\.net\b',                # CloudFront 기본 주소
     r'\bE[0-9A-Z]{12,13}\b',                                # CloudFront 배포·OAC ID
     r'\b[0-9a-f]{64}\b',                                    # 키 해시 등
+    r'\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b',  # 인증서 등 리소스 ID 모양
 ]
-# AWS 공식 문서의 예시 값(실제 리소스 아님) — 테스트에서 '다른 주소'로 씀
-ALLOW = {'d111111abcdef8.cloudfront.net'}
+# AWS 공식 문서의 예시 값(실제 리소스 아님) — 테스트에서 '다른 주소'로 씀, 뒤의 셋은 AWS 공용 관리형 정책 ID
+ALLOW = {'d111111abcdef8.cloudfront.net', '658327ea-f89d-4fab-a63d-7e88639e58f6', '4135ea2d-6df8-44a3-9df3-4b5a84be39ad', 'b689b0a8-53d0-40ab-baf2-68738e2966ac'}
 def public_requests(text):
     # REQUESTS.md는 기능 개선 기록만 공개: '<!-- mirror:skip -->'가 붙은 줄을 빼고,
     # 제목 줄(#)에 붙어 있으면 다음 제목 전까지 그 항목 전체를 뺀다.
